@@ -1,0 +1,21 @@
+name: scan_engine_flutter_example
+description: >-
+  Developer harness for running the DataMuncher scan engine on a real phone,
+  emulator or simulator. Not the product UI.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  scan_engine_flutter:
+    path: ../
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  integration_test:
+    sdk: flutter

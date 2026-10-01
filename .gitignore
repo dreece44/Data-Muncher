@@ -1,0 +1,19 @@
+# Dart / Flutter
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+packages/*/pubspec.lock
+
+# Generated sample phone storage used for local testing
+sample_phone/
+sample_phone_apps.json
+
+# IDEs
+.idea/
+.vscode/
+*.iml
+
+# FVM Version Cache
+.fvm/
