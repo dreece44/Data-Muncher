@@ -25,10 +25,10 @@ class StorageScanApp extends StatelessWidget{
 class ScanResults{
   final String status;
   final String totalStorage;
-  final String usedStroage;
-  final String freeStoragel
+  final String usedStorage;
+  final String freeStorage;
   final String wastedStorage;
-  final Double usedPercent;
+  final double usedPercent;
 
   final Map<String, String> reclaimable;
 
@@ -54,27 +54,27 @@ class ScanResults{
 //---------------------------------------------
 
 class StorageResultsPage extends StatelessWidget {
-  const StroageResutlsPage({super.key});
+  const StorageResultsPage({super.key});
 
-  ScanResults get results{
+  // Sample data so the layout can be previewed. Replace with real scan output.
+  ScanResults get results {
     return ScanResults(
-      status: 
-      totalStroage:
-      usedStorage:
-      freeStroage:
-      wastedStroage:
-      usedPercent:
+      status: "Complete",
+      totalStorage: "128 GB",
+      usedStorage: "96.4 GB",
+      freeStorage: "31.6 GB",
+      wastedStorage: "8.7 GB",
+      usedPercent: 0.75,
 
       reclaimable: {
-        "Temporary Files": "",
-        "Duplicate Fiels": "",
-        "Old Downloads": "",
-        "Cache Files": "",
-      }
+        "Temporary Files": "1.2 GB",
+        "Duplicate Files": "3.4 GB",
+        "Old Downloads": "2.6 GB",
+        "Cache Files": "1.5 GB",
+      },
 
-      filesScanned:
-      directoriesScanned:
-
+      filesScanned: 48213,
+      directoriesScanned: 3127,
     );
   }
 
@@ -144,6 +144,7 @@ class StorageResultsPage extends StatelessWidget {
               builder: (context, constraints) {
                 if(constraints.maxWidth < 650){
                   return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       _statCard(
                         "Total Storage",
@@ -180,7 +181,7 @@ class StorageResultsPage extends StatelessWidget {
                       ),
                     ),
 
-                    const sizedBox(width: 15),
+                    const SizedBox(width: 15),
                     Expanded(
                       child: _statCard(
                         "Free Storage",
@@ -251,7 +252,7 @@ class StorageResultsPage extends StatelessWidget {
             const SizedBox(height: 35),
 
             //---------------------------------------------
-            //Relcaimable Storage Section
+            //Reclaimable Storage Section
             //---------------------------------------------
 
             Card(
@@ -273,7 +274,7 @@ class StorageResultsPage extends StatelessWidget {
                     ...scan.reclaimable.entries.map(
                       (entry){
                         return Padding(
-                          padding: const EdgeInserts.symmetric(
+                          padding: const EdgeInsets.symmetric(
                             vertical: 8.0,
                           ),
 
@@ -317,7 +318,7 @@ class StorageResultsPage extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
+                    const Text(
                       "Scan Information",
                       style: TextStyle(
                         fontSize: 20,
@@ -350,7 +351,7 @@ class StorageResultsPage extends StatelessWidget {
             Row(
               children: [
                 Expanded(
-                  child: OutlinedButton(
+                  child: OutlinedButton.icon(
                     onPressed: () {
                       //open detailed scan results
                     },
@@ -385,18 +386,18 @@ class StorageResultsPage extends StatelessWidget {
         ),
       ),
     );
-  },
+  }
 
   //---------------------------------------------
   //Stat Card
   //---------------------------------------------
 
-  Widget_statCard(String title, String value, IconData icon){
-    return card(
+  Widget _statCard(String title, String value, IconData icon){
+    return Card(
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
-          crossAxisAlignment: CrossAxisALignment.start,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Icon(
               icon,
@@ -414,7 +415,7 @@ class StorageResultsPage extends StatelessWidget {
             const SizedBox(height: 5),
             Text(
               value,
-              Style: const TextStyle(
+              style: const TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
               ),
@@ -448,5 +449,3 @@ class StorageResultsPage extends StatelessWidget {
     );
   }
 }
-        
-
