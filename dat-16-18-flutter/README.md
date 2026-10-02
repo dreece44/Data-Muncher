@@ -9,7 +9,7 @@
 | `test/classifier_test.dart` | DAT-16 | Unit tests for the ruleset |
 | `test/muncher_test.dart` | DAT-18 | Tests the scan using a real temp folder |
 
-## Setting this up in your group's repo
+## Setting this up
 
 1. Install Flutter: https://docs.flutter.dev/get-started/install
 2. Run `flutter create datamuncher` — this generates the `android/`, `ios/`,
