@@ -17,3 +17,5 @@ sample_phone_apps.json
 
 # FVM Version Cache
 .fvm/
+# Local throwaway Flutter app for previewing UI files
+storage_preview/
