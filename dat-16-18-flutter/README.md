@@ -11,9 +11,6 @@
 
 ## Setting this up in your group's repo
 
-These files assume a Flutter project already exists. If your group hasn't
-created one yet:
-
 1. Install Flutter: https://docs.flutter.dev/get-started/install
 2. Run `flutter create datamuncher` — this generates the `android/`, `ios/`,
    and other platform folders this zip doesn't include (they're
