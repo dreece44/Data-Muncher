@@ -1,0 +1,24 @@
+name: datamuncher
+description: DataMuncher — DAT-27 Garbage Bin Viewer and DAT-28 Garbage Bin Empty, on the photo-library app.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.5.0
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  photo_manager: ^3.0.0          # 3.x includes editor.android.moveToTrash
+  photo_manager_image_provider: ^2.1.0
+  image: ^4.2.0
+  shared_preferences: ^2.3.0
+  disk_space_plus: ^0.2.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
