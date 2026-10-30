@@ -124,6 +124,56 @@ class StorageResultsPage extends StatelessWidget {
                 ),
               ],
             ),
+            const SizedBox(height: 20),
+
+// Wasted Digital Space Notification
+Card(
+  color: Colors.orange.shade50,
+  child: Padding(
+    padding: const EdgeInsets.all(16.0),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Icon(
+          Icons.warning_amber_rounded,
+          color: Colors.deepOrange,
+          size: 36,
+        ),
+        const SizedBox(width: 15),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                "Wasted Digital Space Detected",
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.deepOrange,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                "${scan.wastedStorage} of storage may be wasted.",
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 5),
+              const Text(
+                "Review the scan results to identify "
+                "unnecessary files and potentially "
+                "reclaimable storage space.",
+                style: TextStyle(fontSize: 14),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  ),
+),
             const SizedBox(height: 30),
 
             //---------------------------------------------
