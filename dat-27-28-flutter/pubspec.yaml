@@ -1,5 +1,5 @@
 name: datamuncher
-description: DataMuncher — DAT-27 Garbage Bin Viewer and DAT-28 Garbage Bin Empty, on the photo-library app.
+description: DataMuncher photo-library app — Garbage Bin (DAT-27, DAT-28), unused apps (DAT-25) and Do not collect (DAT-32).
 publish_to: 'none'
 version: 1.0.0+1
 
