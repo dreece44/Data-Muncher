@@ -93,7 +93,7 @@ final class UnreadableFileDetector extends WasteDetector {
     }
 
     if (item.isPhoto && await context.analyzeImage(item) is UndecodableImage) {
-      return "Image data is damaged and can't be displayed";
+      return _damagedImage;
     }
     return null;
   }
@@ -213,7 +213,57 @@ bool _textHeader(Uint8List h) {
   return !h.contains(0);
 }
 
-final _jpeg = _Format('JPEG', (h) => _bytesAt(h, 0, const [0xFF, 0xD8, 0xFF]));
+const _damagedImage = "Image data is damaged and can't be displayed";
+
+/// Walks a JPEG's segments and checks its compressed image data.
+///
+/// Decoding alone isn't enough: Android's native decoder happily turns
+/// scrambled data into a smeared picture instead of failing. In valid
+/// compressed data a 0xFF byte is only ever followed by 0x00 (an escaped
+/// 0xFF), a restart marker, or a real marker, so random damage shows up
+/// within a few hundred bytes. Anything after the end-of-image marker is
+/// ignored (phones append extras such as motion-photo videos there), and a
+/// file that simply stops is left to the decoder.
+Future<String?> _jpegData(StorageSource source, StorageItem item) async {
+  final b = await source.readRange(item, 0, item.sizeBytes);
+  var pos = 2; // after the start-of-image marker
+  var inScan = false;
+  while (pos < b.length) {
+    if (inScan && b[pos] != 0xFF) {
+      pos++;
+      continue;
+    }
+    if (b[pos] != 0xFF) return _damagedImage; // segments must start with a marker
+    while (pos < b.length && b[pos] == 0xFF) {
+      pos++; // fill bytes
+    }
+    if (pos >= b.length) return null;
+    final marker = b[pos++];
+    if (marker == 0x00 && inScan) continue; // escaped 0xFF inside image data
+    if (marker >= 0xD0 && marker <= 0xD7 && inScan) continue; // restart marker
+    if (marker == 0xD9) return null; // end of image
+    if (!_jpegSegmentMarkers.contains(marker)) return _damagedImage;
+    if (pos + 2 > b.length) return null;
+    final length = (b[pos] << 8) | b[pos + 1];
+    if (length < 2) return _damagedImage;
+    pos += length;
+    inScan = marker == 0xDA; // start of scan: compressed data follows
+  }
+  return null;
+}
+
+/// Markers that carry a length-prefixed segment: frame headers and tables
+/// (0xC0–0xCF), quantisation and restart tables, start of scan, app data
+/// (0xE0–0xEF) and comments.
+final _jpegSegmentMarkers = {
+  for (var m = 0xC0; m <= 0xCF; m++) m,
+  0xDA, 0xDB, 0xDC, 0xDD, 0xDE, 0xDF,
+  for (var m = 0xE0; m <= 0xEF; m++) m,
+  0xFE,
+};
+
+final _jpeg = _Format('JPEG', (h) => _bytesAt(h, 0, const [0xFF, 0xD8, 0xFF]),
+    checkStructure: _jpegData);
 final _png = _Format(
     'PNG',
     (h) =>

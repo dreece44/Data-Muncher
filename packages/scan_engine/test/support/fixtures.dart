@@ -12,7 +12,10 @@ class FakeDevice implements DeviceAdapter {
     this.platform = DevicePlatform.android,
     this.apps,
     this.stats,
-  })  : memory = MemoryStorageSource(files),
+    ThumbnailDecoder? decoder,
+  })  : memory = decoder == null
+            ? MemoryStorageSource(files)
+            : MemoryStorageSource(files, decoder: decoder),
         permissions = StaticPermissionService(
             permissions ?? {ScanPermission.storage: PermissionState.granted});
 

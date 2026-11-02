@@ -10,15 +10,19 @@ import '../platform/storage_source.dart';
 /// Files held in memory, keyed by path. For tests: build a fake phone in a
 /// few lines and check exactly what the engine reads.
 final class MemoryStorageSource implements StorageSource {
-  MemoryStorageSource(Map<String, List<int>> files, {DateTime? modified})
+  MemoryStorageSource(Map<String, List<int>> files,
+      {DateTime? modified,
+      ThumbnailDecoder decoder =
+          const PureDartThumbnailDecoder(useIsolates: false)})
       : _files = {
           for (final e in files.entries) e.key: Uint8List.fromList(e.value),
         },
-        _modified = modified ?? DateTime(2026, 1, 1);
+        _modified = modified ?? DateTime(2026, 1, 1),
+        _decoder = decoder;
 
   final Map<String, Uint8List> _files;
   final DateTime _modified;
-  final _decoder = const PureDartThumbnailDecoder(useIsolates: false);
+  final ThumbnailDecoder _decoder;
 
   /// Paths whose reads fail, to simulate unreadable files.
   final Set<String> unreadable = {};

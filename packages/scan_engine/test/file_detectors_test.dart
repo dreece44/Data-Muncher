@@ -1,7 +1,26 @@
+import 'dart:math';
+import 'dart:typed_data';
+
 import 'package:scan_engine/scan_engine.dart';
 import 'package:test/test.dart';
 
 import 'support/fixtures.dart';
+
+/// Like Android's native decoder: turns any JPEG-looking bytes into a
+/// picture rather than failing.
+final class _LenientDecoder implements ThumbnailDecoder {
+  const _LenientDecoder();
+
+  @override
+  bool supportsExtension(String extension) => extension == 'jpg';
+
+  @override
+  Future<Thumbnail?> decode(Uint8List bytes, int size) async => Thumbnail(
+      size: size,
+      luma: Uint8List(size * size)..fillRange(0, size * size, 128),
+      sourceWidth: 4000,
+      sourceHeight: 3000);
+}
 
 void main() {
   group('EmptyFileDetector', () {
@@ -132,6 +151,56 @@ void main() {
       }
       final found = await reasons({'damaged.jpg': bytes});
       expect(found.values.single, contains('damaged'));
+    });
+
+    test('reports damaged JPEGs even when the decoder accepts them', () async {
+      // Android's native decoder draws scrambled JPEG data instead of
+      // failing, so the check can't rely on decoding.
+      final bytes = jpg(scene(4));
+      final random = Random(99);
+      for (var i = bytes.length ~/ 3; i < bytes.length - 2; i++) {
+        bytes[i] = random.nextInt(256);
+      }
+      final device = FakeDevice({'damaged.jpg': bytes},
+          decoder: const _LenientDecoder());
+      final report =
+          await scan(device, detectors: [const UnreadableFileDetector()]);
+      expect(report.findings.single.reason, contains('damaged'));
+    });
+
+    test('accepts valid JPEGs, including data after the end', () async {
+      final found = await reasons({
+        'plain.jpg': jpg(scene(5)),
+        'small_quality.jpg': jpg(scene(6), quality: 20),
+        // Motion photos and some phones append extra data after the image.
+        'motion.jpg': [
+          ...jpg(scene(7)),
+          ...List.generate(3000, (i) => i % 256)
+        ],
+        'flat.jpg': jpg(flat(5)),
+      });
+      expect(found, isEmpty);
+    });
+
+    test('accepts escaped bytes, restart markers and multiple scans', () async {
+      List<int> segment(int marker, List<int> payload) =>
+          [0xFF, marker, (payload.length + 2) >> 8, (payload.length + 2) & 0xFF, ...payload];
+      final bytes = [
+        0xFF, 0xD8, // start of image
+        ...segment(0xE0, ascii('JFIF\x00')),
+        ...segment(0xDD, [0, 4]), // restart interval
+        ...segment(0xDA, [1, 1, 0, 0, 63, 0]), // first scan
+        0x12, 0xFF, 0x00, 0x34, 0xFF, 0xD0, 0x56, 0xFF, 0xFF, 0xD1, 0x78,
+        ...segment(0xC4, [0x10, ...List.filled(16, 0)]), // table between scans
+        ...segment(0xDA, [1, 1, 0, 0, 63, 0]), // second scan
+        0x9A, 0xFF, 0x00,
+        0xFF, 0xD9, // end of image
+      ];
+      final device = FakeDevice({'progressive.jpg': bytes},
+          decoder: const _LenientDecoder());
+      final report =
+          await scan(device, detectors: [const UnreadableFileDetector()]);
+      expect(report.findings, isEmpty);
     });
 
     test('leaves tiny blank files to the empty-file detector', () async {
