@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'garbage_collection';
+import 'garbage_collection.dart';
 
 
 void main() {

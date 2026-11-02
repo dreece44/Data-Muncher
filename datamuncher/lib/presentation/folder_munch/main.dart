@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
-import 'models.dart';
-import 'muncher.dart';
+import '../../models.dart';
+import '../../muncher.dart';
 
 void main() => runApp(const DataMuncherApp());
 

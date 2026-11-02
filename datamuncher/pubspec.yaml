@@ -18,6 +18,9 @@ dependencies:
   path: ^1.9.0
   scan_engine_flutter:           # DAT-1 scan engine + Android/iOS device adapters
     path: ../packages/scan_engine_flutter
+  file_picker: ^8.1.7            # DAT-17 garbage storage, DAT-18 folder scan
+  archive: ^4.0.0                # DAT-17 compression (4.x, the line image uses)
+  crypto: ^3.0.3                 # DAT-16 duplicate hashing
 
 dev_dependencies:
   flutter_lints: ^6.0.0

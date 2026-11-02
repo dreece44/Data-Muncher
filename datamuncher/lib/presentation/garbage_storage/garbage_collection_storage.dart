@@ -1,6 +1,5 @@
 
 import 'dart:typed_data';
-import 'dart:convert';
 
 import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
@@ -63,16 +62,15 @@ void _optimizeFile(GarbageFile file) {
         : file.storedBytes;
 
     // Attempt lossless compression for any file type.
-    final List<int>? compressedBytes =
+    final List<int> compressedBytes =
         GZipEncoder().encode(originalBytes);
 
     final bool useCompression =
-        compressedBytes != null &&
         compressedBytes.length < originalBytes.length;
 
     // Keep compressed data only when it is smaller.
     final List<int> optimizedBytes = useCompression
-        ? compressedBytes!
+        ? compressedBytes
         : originalBytes;
 
     setState(() {
@@ -173,7 +171,7 @@ void _optimizeFile(GarbageFile file) {
         try {
           final compressedBytes = GZipEncoder().encode(bytes);
 
-          if (compressedBytes != null && compressedBytes.length < bytes.length) {
+          if (compressedBytes.length < bytes.length) {
             storedBytes = compressedBytes;
             compressed = true;
           }
