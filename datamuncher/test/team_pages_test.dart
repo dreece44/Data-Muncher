@@ -144,6 +144,15 @@ void main() {
     expect(find.text('0 B'), findsWidgets);
   });
 
+  testWidgets('GarbageStoragePage stat cards fit a phone screen', (tester) async {
+    tester.view.physicalSize = const Size(411, 914);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(app(const GarbageStoragePage()));
+    expect(tester.takeException(), isNull, reason: 'no overflow');
+    expect(find.text('Storage Used'), findsOneWidget);
+  });
+
   testWidgets('MunchHome opens before any scan', (tester) async {
     await tester.pumpWidget(app(const MunchHome()));
     expect(find.text('MUNCH MY DATA'), findsOneWidget);
