@@ -45,9 +45,13 @@ flutter test
 ```
 
 On-device test of the teammates' pages (needs the sample phone pushed and
-file access granted):
+file access granted). The test uninstalls the app when it finishes, so
+install it and grant access before each run:
 
 ```bash
+flutter build apk --debug
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
 adb shell appops set com.example.datamuncher MANAGE_EXTERNAL_STORAGE allow
+adb shell pm grant com.example.datamuncher android.permission.READ_MEDIA_IMAGES
 flutter test integration_test -d emulator-5554
 ```
