@@ -63,6 +63,8 @@ void main() {
           reason: 'no app inventory was given');
       expect(report.itemsScanned, 8,
           reason: '.nomedia and .thumbnails are hidden');
+      expect(report.foldersScanned, 5,
+          reason: 'Camera, WhatsApp, Download, Documents, com.app');
       expect(report.reclaimableBytes, greaterThan(0));
     });
 

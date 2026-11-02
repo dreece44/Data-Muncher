@@ -75,6 +75,7 @@ final class ScanReport {
     required this.categories,
     required this.issues,
     required this.notes,
+    this.foldersScanned = 0,
   });
 
   final DevicePlatform platform;
@@ -85,6 +86,10 @@ final class ScanReport {
   final StorageStats? storage;
   final int itemsScanned;
   final int bytesScanned;
+
+  /// Distinct folders holding the scanned files. Photo library items have
+  /// no folder and don't count.
+  final int foldersScanned;
   final List<Finding> findings;
   final Map<WasteCategory, CategoryResult> categories;
   final List<ScanIssue> issues;
@@ -121,6 +126,7 @@ final class ScanReport {
         'storage': storage?.toJson(),
         'itemsScanned': itemsScanned,
         'bytesScanned': bytesScanned,
+        'foldersScanned': foldersScanned,
         'reclaimableBytes': reclaimableBytes,
         'categories': {
           for (final e in categories.entries)

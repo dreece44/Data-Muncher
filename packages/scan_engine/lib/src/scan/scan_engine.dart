@@ -121,6 +121,10 @@ final class ScanEngine {
       storage: await _storageStats(issues),
       itemsScanned: items.length,
       bytesScanned: bytesScanned,
+      foldersScanned: {
+        for (final item in items)
+          if (item.path case final path?) path.substring(0, path.lastIndexOf(RegExp(r'[/\\]')) + 1),
+      }.length,
       findings: findings,
       categories: categories,
       issues: issues,
