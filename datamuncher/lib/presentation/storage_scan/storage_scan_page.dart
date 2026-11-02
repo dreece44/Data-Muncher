@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:scan_engine_flutter/scan_engine_flutter.dart' as engine;
 
 import '../../application/storage_scan/storage_scan.dart';
+import '../../application/storage_scan/team_views.dart';
 import '../../core.dart';
 import '../../data/garbage_bin/bin_entry.dart';
 import '../../pages.dart' show darkGreen, green, mono;
 import '../garbage_bin/format.dart';
+import '../team_pages.dart';
 
 enum _Stage { scanning, needsPermission, failed, done }
 
@@ -103,6 +105,27 @@ class _StorageScanPageState extends State<StorageScanPage> {
     Navigator.pop(context);
   }
 
+  /// The garbage collection page, one row per category. What it sends to
+  /// the bin also leaves this list.
+  Future<void> _openGarbageCollection() {
+    final groups = collectionGroupsFrom(_candidates);
+    return openGarbageCollection(context, groups.keys.toList(), (chosen) async {
+      final picked = [for (final row in chosen) ...groups[row]!];
+      final result = await widget.state.collectFiles(picked);
+      final failed = result.failed.toSet();
+      final moved = {for (final c in picked) if (!failed.contains(c.path)) c.item.id};
+      if (!mounted) return;
+      setState(() {
+        _candidates = [for (final c in _candidates) if (!moved.contains(c.item.id)) c];
+        _selected.removeAll(moved);
+      });
+      if (failed.isNotEmpty) {
+        // They stay in this page's list to try again.
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("${failed.length} couldn't be moved.")));
+      }
+    });
+  }
+
   static String _describe(engine.ScanProgress p) => switch (p.phase) {
         engine.ScanPhase.checkingPermissions => 'Checking permissions',
         engine.ScanPhase.listing => 'Listing files (${p.done})',
@@ -192,6 +215,20 @@ class _StorageScanPageState extends State<StorageScanPage> {
               padding: const EdgeInsets.only(top: 6),
               child: Text(note, style: const TextStyle(fontSize: 12, color: Colors.white60)),
             ),
+          const SizedBox(height: 12),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            OutlinedButton.icon(
+              onPressed: () => openStorageResults(context, scanResultsFrom(report, _candidates, _apps)),
+              icon: const Icon(Icons.pie_chart_outline),
+              label: const Text('Summary'),
+            ),
+            if (_candidates.isNotEmpty)
+              OutlinedButton.icon(
+                onPressed: _moving ? null : _openGarbageCollection,
+                icon: const Icon(Icons.checklist),
+                label: const Text('By category'),
+              ),
+          ]),
         ]),
       ),
       for (final MapEntry(key: reason, value: items) in groups.entries) ...[

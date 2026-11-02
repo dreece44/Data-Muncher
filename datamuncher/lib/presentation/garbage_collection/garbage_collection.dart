@@ -12,14 +12,20 @@ class StorageItem {
 }
 
 class GarbageCollectionPage extends StatefulWidget {
-  const GarbageCollectionPage({super.key});
+  const GarbageCollectionPage({super.key, this.items, this.onSend});
+
+  /// Items to list, e.g. from a storage scan. Null shows the sample items.
+  final List<StorageItem>? items;
+
+  /// Moves the chosen items to the garbage bin. Sent items leave the list.
+  final Future<void> Function(List<StorageItem> selected)? onSend;
 
   @override
   State<GarbageCollectionPage> createState() => _GarbageCollectionPageState();
 }
 
 class _GarbageCollectionPageState extends State<GarbageCollectionPage> {
-  final List<StorageItem> items = [
+  late final List<StorageItem> items = widget.items != null ? List.of(widget.items!) : [
     StorageItem(
       name: 'Temporary Files',
       size: '42 GB',
@@ -120,9 +126,9 @@ class _GarbageCollectionPageState extends State<GarbageCollectionPage> {
                       ),
                     ),
 
-                    const Text(
-                      "95 GB",
-                      style: TextStyle(
+                    Text(
+                      _totalSize(selectedItems),
+                      style: const TextStyle(
                         fontSize: 20,
                         fontWeight: FontWeight.bold,
                       ),
@@ -209,16 +215,18 @@ class _GarbageCollectionPageState extends State<GarbageCollectionPage> {
   //---------------------------------
   //Garbage Collection
   //---------------------------------
-  void _sendToGarbageBin(List<StorageItem> selectedItems){
+  Future<void> _sendToGarbageBin(List<StorageItem> selectedItems) async {
     //This is where your garbage collection/ file-system
     //will eventually go.
-
-  
+    final onSend = widget.onSend;
+    if (onSend != null) await onSend(selectedItems);
+    if (!mounted) return;
 
   setState((){
     for(final item in selectedItems){
       item.selected = false;
     }
+    if (onSend != null) items.removeWhere(selectedItems.contains);
   });
   ScaffoldMessenger.of(context).showSnackBar(
     const SnackBar(
@@ -226,4 +234,25 @@ class _GarbageCollectionPageState extends State<GarbageCollectionPage> {
     ),
   );
  }
-}
+
+  //---------------------------------
+  //Selected total, from sizes like "42 GB" or "1.5 MB"
+  //---------------------------------
+  static String _totalSize(List<StorageItem> selectedItems) {
+    const units = {'B': 1.0, 'KB': 1e3, 'MB': 1e6, 'GB': 1e9, 'TB': 1e12};
+    var bytes = 0.0;
+    for (final item in selectedItems) {
+      final parts = item.size.trim().split(RegExp(r'\s+'));
+      final value = double.tryParse(parts.first) ?? 0;
+      bytes += value * (units[parts.length > 1 ? parts[1].toUpperCase() : 'B'] ?? 1);
+    }
+    for (final unit in ['TB', 'GB', 'MB', 'KB']) {
+      final size = units[unit]!;
+      if (bytes >= size) {
+        final value = bytes / size;
+        return '${value == value.roundToDouble() ? value.toStringAsFixed(0) : value.toStringAsFixed(1)} $unit';
+      }
+    }
+    return '${bytes.round()} B';
+  }
+}

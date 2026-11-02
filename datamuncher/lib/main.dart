@@ -4,6 +4,7 @@ import 'package:photo_manager/photo_manager.dart';
 import 'core.dart';
 import 'pages.dart';
 import 'presentation/storage_scan/storage_scan_page.dart';
+import 'presentation/team_pages.dart';
 
 void main() => runApp(const DataMuncherApp());
 
@@ -139,6 +140,8 @@ class _HomePageState extends State<HomePage> {
               const SizedBox(height: 10),
               _btn('SCAN STORAGE', null,
                   () => Navigator.push(context, MaterialPageRoute(builder: (_) => StorageScanPage(s)))),
+              _btn('SCAN A FOLDER', null, () => openFolderMunch(context)),
+              _btn('GARBAGE STORAGE', null, () => openGarbageStorage(context)),
               const SizedBox(height: 6),
               FilledButton(
                 onPressed: s.scanning ? null : _munch,

@@ -54,10 +54,14 @@ class ScanResults{
 //---------------------------------------------
 
 class StorageResultsPage extends StatelessWidget {
-  const StorageResultsPage({super.key});
+  const StorageResultsPage({super.key, this.scanResults});
+
+  /// Real scan output from the app. Null shows the sample data below.
+  final ScanResults? scanResults;
 
   // Sample data so the layout can be previewed. Replace with real scan output.
   ScanResults get results {
+    if (scanResults != null) return scanResults!;
     return ScanResults(
       status: "Complete",
       totalStorage: "128 GB",
