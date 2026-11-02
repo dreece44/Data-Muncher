@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
 
+import 'application/apps/unused_apps_controller.dart';
 import 'core.dart';
+import 'data/apps/app_inventory.dart';
 import 'pages.dart';
+import 'presentation/apps/app_icon.dart';
+import 'presentation/apps/unused_apps_screen.dart';
 
 void main() => runApp(const DataMuncherApp());
 
@@ -26,10 +30,49 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   final s = MunchState();
 
+  /// Unused app detection (DAT-25). Android only; on iPhone the screen
+  /// explains why it isn't possible.
+  late final AppInventory _inventory = platformAppInventory();
+  late final UnusedAppsController apps =
+      UnusedAppsController(inventory: _inventory, exclusions: s.exclusions);
+  late final AppIconCache icons = AppIconCache(_inventory.appIcon);
+
   @override
   void initState() {
     super.initState();
     s.init();
+    apps.load();
+  }
+
+  @override
+  void dispose() {
+    apps.dispose();
+    super.dispose();
+  }
+
+  void _openUnusedApps() => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => UnusedAppsScreen(
+            controller: apps,
+            icons: icons,
+            onOpenDoNotCollect: _openDoNotCollect,
+          ),
+        ),
+      );
+
+  void _openDoNotCollect() => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => DoNotCollectPage(
+            s,
+            appIcon: (pkg) => AppIcon(packageName: pkg, cache: icons),
+          ),
+        ),
+      );
+
+  Future<void> _rescan() async {
+    await Future.wait([s.scan(), apps.load()]);
   }
 
   void _open(String title, List<AssetEntity> list, {bool pre = true}) =>
@@ -80,7 +123,7 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) => Scaffold(
         body: SafeArea(
           child: ListenableBuilder(
-            listenable: s,
+            listenable: Listenable.merge([s, apps]),
             builder: (_, __) => ListView(padding: const EdgeInsets.all(16), children: [
               Row(children: [
                 Expanded(
@@ -130,6 +173,7 @@ class _HomePageState extends State<HomePage> {
               _btn('DUPLICATES', s.duplicates.length, () => _open('DUPLICATES', s.duplicates)),
               _btn('EMPTY', s.empty.length, () => _open('EMPTY', s.empty)),
               _btn('BLURRY', s.blurry.length, () => _open('BLURRY', s.blurry)),
+              _btn('UNUSED APPS', apps.count, _openUnusedApps),
               Row(children: [
                 Expanded(child: _selectTile('IMAGE\nSELECT', () => _open('IMAGES', s.images.toList(), pre: false))),
                 const SizedBox(width: 12),
@@ -145,7 +189,12 @@ class _HomePageState extends State<HomePage> {
                 ),
                 child: Text('MUNCH MY DATA', style: mono.copyWith(fontSize: 22)),
               ),
-              TextButton(onPressed: s.scanning ? null : s.scan, child: const Text('Rescan storage')),
+              TextButton(onPressed: s.scanning ? null : _rescan, child: const Text('Rescan storage')),
+              TextButton.icon(
+                onPressed: _openDoNotCollect,
+                icon: const Icon(Icons.shield_outlined, size: 18),
+                label: Text('Do-not-collect list (${s.exclusions.count()})'),
+              ),
             ]),
           ),
         ),

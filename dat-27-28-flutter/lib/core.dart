@@ -6,11 +6,11 @@ import 'package:image/image.dart' as img;
 import 'package:photo_manager/photo_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'application/exclusion/exclusion_list.dart';
+import 'data/exclusion/shared_prefs_exclusion_store.dart';
 import 'data/garbage_bin/bin_entry.dart';
 import 'rules.dart';
 
-/// Days a recovered file is protected by "Do not collect".
-const int excludeDays = 30;
 
 /// How long the phone's own trash keeps deleted photos and videos (iOS
 /// Recently Deleted, the Android 11+ trash). Emptying the bin relies on it
@@ -80,11 +80,19 @@ CollectionReason? reasonForVerdicts(Iterable<Verdict> verdicts) {
 }
 
 class MunchState extends ChangeNotifier {
+  MunchState({ExclusionList? exclusions})
+      : exclusions = exclusions ?? ExclusionList() {
+    this.exclusions.addListener(notifyListeners);
+  }
+
+  /// Do-not-collect list (DAT-32): recovered files and kept apps that scans
+  /// skip until their period ends.
+  final ExclusionList exclusions;
+
   List<AssetEntity> all = [];
   List<AssetEntity> duplicates = [], empty = [], blurry = [];
   Set<String> bin = {}; // Garbage Bin (asset ids)
   Map<String, BinRecord> binInfo = {}; // id -> why/when it was collected
-  Map<String, int> excluded = {}; // id -> expiry (ms)
   double usedFraction = 0, freeGb = 0, progress = 0;
   bool scanning = false, scanned = false, denied = false;
 
@@ -111,12 +119,8 @@ class MunchState extends ChangeNotifier {
     for (final id in bin) {
       binInfo.putIfAbsent(id, () => BinRecord(CollectionReason.other, now));
     }
-    final nowMs = now.millisecondsSinceEpoch;
-    for (final e in _p.getStringList('excl') ?? []) {
-      final i = e.lastIndexOf('|');
-      final t = int.tryParse(e.substring(i + 1)) ?? 0;
-      if (t > nowMs) excluded[e.substring(0, i)] = t;
-    }
+    // Also moves the old 'excl' entries into the new format.
+    await exclusions.load(SharedPrefsExclusionStore(_p));
     binRevision++;
     await refreshStorage();
     await scan();
@@ -128,7 +132,6 @@ class MunchState extends ChangeNotifier {
       for (final id in bin)
         if (binInfo[id] != null) binInfo[id]!.encode(id),
     ]);
-    await _p.setStringList('excl', [for (final e in excluded.entries) '${e.key}|${e.value}']);
   }
 
   /// Storage indicator data.
@@ -159,6 +162,9 @@ class MunchState extends ChangeNotifier {
       scanning = false;
       return notifyListeners();
     }
+    // Exclusions that ended since the last scan make those files eligible
+    // again.
+    await exclusions.purgeExpired();
     final count = await paths.first.assetCountAsync;
     all = await paths.first.getAssetListRange(start: 0, end: count);
 
@@ -168,7 +174,7 @@ class MunchState extends ChangeNotifier {
 
     for (var i = 0; i < all.length; i++) {
       final a = all[i];
-      if (!bin.contains(a.id) && !excluded.containsKey(a.id)) {
+      if (!bin.contains(a.id) && !exclusions.isExcluded(a.id)) {
         final bytes = await a.thumbnailDataWithSize(const ThumbnailSize(128, 128));
         final im = bytes == null ? null : img.decodeImage(bytes);
         final f = AssetFeatures.fromImage(a.id, im,
@@ -202,8 +208,12 @@ class MunchState extends ChangeNotifier {
   }
 
   /// Garbage Collection: send items to the Garbage Bin.
+  ///
+  /// Collecting a file by hand overrides its "Do not collect" mark (the
+  /// review page asks first), so the mark is removed.
   Future<void> collect(Iterable<AssetEntity> items) async {
     final ids = items.map((a) => a.id).toSet();
+    await exclusions.removeAll(ids);
     final now = DateTime.now();
     for (final id in ids) {
       if (bin.add(id)) {
@@ -218,18 +228,24 @@ class MunchState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// File Recovery (+ optional Collection Exclusion).
-  Future<void> recover(Iterable<String> ids, {bool doNotCollect = false}) async {
+  /// File Recovery, optionally marking the files "Do not collect" for 30
+  /// days (DAT-32). [names] gives each file's name for the Do-not-collect
+  /// list.
+  Future<void> recover(
+    Iterable<String> ids, {
+    bool doNotCollect = false,
+    Map<String, String> names = const {},
+  }) async {
     final list = ids.toList();
     bin.removeAll(list);
     for (final id in list) {
       binInfo.remove(id);
     }
     if (doNotCollect) {
-      final until = DateTime.now().add(const Duration(days: excludeDays)).millisecondsSinceEpoch;
-      for (final id in list) {
-        excluded[id] = until;
-      }
+      await exclusions.excludeAll(
+        {for (final id in list) id: names[id]},
+        kind: ExcludedKind.file,
+      );
     }
     binRevision++;
     await _save();
