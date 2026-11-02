@@ -377,7 +377,7 @@ Future<void> _deleteSelectedFiles() async {
                     crossAxisCount: columns,
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
-                    childAspectRatio: columns == 1 ? 3.0 : 1.5,
+                    childAspectRatio: columns == 1 ? 2.5 : 1.5,
                     children: [
                       _statCard(
                         'Storage Used',
