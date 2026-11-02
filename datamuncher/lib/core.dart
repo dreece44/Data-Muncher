@@ -216,8 +216,15 @@ class MunchState extends ChangeNotifier {
     for (var i = 0; i < all.length; i++) {
       final a = all[i];
       if (!bin.contains(a.id) && !excluded.containsKey(a.id)) {
-        final bytes = await a.thumbnailDataWithSize(const ThumbnailSize(128, 128));
-        final im = bytes == null ? null : img.decodeImage(bytes);
+        // A damaged photo or video has no thumbnail; the phone throws rather
+        // than returning null. Treat it as missing so it's flagged, not fatal.
+        img.Image? im;
+        try {
+          final bytes = await a.thumbnailDataWithSize(const ThumbnailSize(128, 128));
+          im = bytes == null ? null : img.decodeImage(bytes);
+        } catch (_) {
+          im = null;
+        }
         final f = AssetFeatures.fromImage(a.id, im,
             isImage: a.type == AssetType.image, durationSec: a.duration);
         final verdicts = classifier.classify(f);
