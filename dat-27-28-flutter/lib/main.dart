@@ -1,12 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
 
+import 'application/apps/unused_apps.dart';
 import 'application/apps/unused_apps_controller.dart';
 import 'core.dart';
 import 'data/apps/app_inventory.dart';
 import 'pages.dart';
 import 'presentation/apps/app_icon.dart';
 import 'presentation/apps/unused_apps_screen.dart';
+
+/// Days an app must go unopened to count as unused (DAT-25). 90 normally.
+/// For a demo on an emulator, where every app is new, run with
+/// `flutter run --dart-define=UNUSED_APP_DAYS=0` to list every app you
+/// installed yourself.
+const int unusedAppDays = int.fromEnvironment('UNUSED_APP_DAYS', defaultValue: 90);
 
 void main() => runApp(const DataMuncherApp());
 
@@ -33,8 +40,11 @@ class _HomePageState extends State<HomePage> {
   /// Unused app detection (DAT-25). Android only; on iPhone the screen
   /// explains why it isn't possible.
   late final AppInventory _inventory = platformAppInventory();
-  late final UnusedAppsController apps =
-      UnusedAppsController(inventory: _inventory, exclusions: s.exclusions);
+  late final UnusedAppsController apps = UnusedAppsController(
+    inventory: _inventory,
+    exclusions: s.exclusions,
+    rules: const UnusedAppRules(unusedAfter: Duration(days: unusedAppDays)),
+  );
   late final AppIconCache icons = AppIconCache(_inventory.appIcon);
 
   @override

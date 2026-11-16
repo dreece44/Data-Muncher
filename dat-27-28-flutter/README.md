@@ -75,6 +75,8 @@ flutter run
 8. iPhone: the screen explains that iOS doesn't allow this and points to Settings → General → iPhone Storage.
 9. If the Android code is missing from a build, the screen says to run the setup script instead of failing silently.
 
+For a demo on an emulator, where every app is newly installed, run `flutter run --dart-define=UNUSED_APP_DAYS=0` so every app you installed yourself is listed.
+
 Same detection rules as `UnusedAppDetector` in Devin's scan engine (DAT-1); `InstalledApp` uses the same fields, so the two can be swapped once that package is merged.
 
 ## DAT-32 — Collection Exclusion ("Do not collect"): acceptance criteria
