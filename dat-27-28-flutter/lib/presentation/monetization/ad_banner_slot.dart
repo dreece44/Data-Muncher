@@ -69,15 +69,29 @@ class WithAdBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Expanded(child: child),
-        AdBannerSlot(
-          monetization: monetization,
-          ads: ads,
-          onRemoveAds: onRemoveAds,
-        ),
-      ],
+    return ListenableBuilder(
+      listenable: monetization,
+      child: child,
+      builder: (context, child) => Column(
+        children: [
+          Expanded(
+            // The banner sits over the home indicator area and pads itself,
+            // so the screen above mustn't add that space too.
+            child: monetization.showAds
+                ? MediaQuery.removePadding(
+                    context: context,
+                    removeBottom: true,
+                    child: child!,
+                  )
+                : child!,
+          ),
+          AdBannerSlot(
+            monetization: monetization,
+            ads: ads,
+            onRemoveAds: onRemoveAds,
+          ),
+        ],
+      ),
     );
   }
 }

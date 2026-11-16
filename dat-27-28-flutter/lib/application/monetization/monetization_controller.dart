@@ -148,15 +148,16 @@ class MonetizationController extends ChangeNotifier {
       final active = await _gateway.restore();
       if (active == true) {
         await _setPlan(Plan.adFree);
-        if (userAsked) _message = 'Subscription restored. No more ads.';
       } else if (active == false) {
         // The store is sure: the subscription has ended or never existed.
         await _setPlan(Plan.free);
-        if (userAsked) {
-          _message = 'No ad-free subscription was found for this account.';
-        }
-      } else if (userAsked && _plan == Plan.free) {
-        _message = 'No ad-free subscription was found for this account.';
+      }
+      // When the store can't say (null), a restored purchase may still have
+      // arrived as an event while waiting, so go by the plan now.
+      if (userAsked) {
+        _message = _plan == Plan.adFree
+            ? 'Subscription restored. No more ads.'
+            : 'No ad-free subscription was found for this account.';
       }
     } catch (e) {
       debugPrint('Restoring purchases failed: $e');

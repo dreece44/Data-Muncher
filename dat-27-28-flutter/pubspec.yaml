@@ -4,8 +4,8 @@ publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: ^3.5.0
-  flutter: ">=3.24.0"
+  sdk: ^3.8.0
+  flutter: ">=3.32.0"
 
 dependencies:
   flutter:
@@ -14,7 +14,7 @@ dependencies:
   photo_manager_image_provider: ^2.1.0
   image: ^4.2.0
   shared_preferences: ^2.3.0
-  disk_space_plus: ^0.2.3
+  disk_space_plus: ^0.2.5           # 0.2.5+ uses DiskSpacePlus() instances
   # DAT-38 ads and DAT-39 subscription. Wide ranges so `flutter pub get`
   # picks the newest version that works with your Flutter.
   google_mobile_ads: ">=5.1.0 <10.0.0"
@@ -23,6 +23,7 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_lints: ">=5.0.0 <7.0.0"
 
 flutter:
   uses-material-design: true

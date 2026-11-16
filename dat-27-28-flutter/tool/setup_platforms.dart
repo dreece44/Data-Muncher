@@ -12,7 +12,8 @@
 //   5. adds the photo library messages iPhone requires to Info.plist,
 //   6. adds the AdMob app ids (DAT-38) to Android and iPhone,
 //   7. raises Android to API 24 and iPhone to iOS 13 if lower, which the
-//      ads and subscription plugins (DAT-38, DAT-39) need.
+//      ads and subscription plugins (DAT-38, DAT-39) need,
+//   8. names the app "DataMuncher" and installs its icon (tool/branding).
 
 import 'dart:io';
 
@@ -83,6 +84,8 @@ Future<void> main() async {
   _patchInfoPlist();
   _raiseAndroidMinSdk();
   _raiseIosTarget();
+  _setAppName();
+  _installIcons();
 
   stdout.writeln('\nDone. Next:\n'
       '  flutter pub get\n'
@@ -283,6 +286,69 @@ void _raiseIosTarget() {
   }
   file.writeAsStringSync(text.replaceRange(line.start, line.end, "platform :ios, '13.0'"));
   _ok("Set iOS target to 13.0 in $_podfile");
+}
+
+const _appName = 'DataMuncher';
+
+/// The name under the icon. `flutter create` would show "Datamuncher".
+void _setAppName() {
+  var changed = false;
+  final plist = File(_plistPath);
+  if (plist.existsSync()) {
+    final text = plist.readAsStringSync();
+    final updated = text.replaceFirstMapped(
+      RegExp(r'(<key>CFBundleDisplayName</key>\s*<string>)[^<]*(</string>)'),
+      (m) => '${m[1]}$_appName${m[2]}',
+    );
+    if (updated != text) {
+      plist.writeAsStringSync(updated);
+      changed = true;
+    }
+  }
+  final manifest = File(_manifestPath);
+  if (manifest.existsSync()) {
+    final text = manifest.readAsStringSync();
+    final updated = text.replaceFirst(
+        RegExp(r'android:label="[^"]*"'), 'android:label="$_appName"');
+    if (updated != text) {
+      manifest.writeAsStringSync(updated);
+      changed = true;
+    }
+  }
+  _ok(changed ? 'Named the app $_appName' : 'App already named $_appName');
+}
+
+/// Copies the DataMuncher icon over Flutter's default one.
+void _installIcons() {
+  var copied = 0;
+  void copyDir(String from, String to, {bool recursive = false}) {
+    final source = Directory(from);
+    if (!source.existsSync() || !Directory(to).existsSync()) return;
+    for (final entity in source.listSync(recursive: recursive)) {
+      if (entity is! File || !entity.path.endsWith('.png')) continue;
+      final relative = entity.path.substring(source.path.length + 1);
+      final target = File('$to/$relative');
+      if (!target.parent.existsSync()) continue;
+      final bytes = entity.readAsBytesSync();
+      if (target.existsSync() && _sameBytes(target.readAsBytesSync(), bytes)) {
+        continue;
+      }
+      target.writeAsBytesSync(bytes);
+      copied++;
+    }
+  }
+
+  copyDir('tool/branding/ios', 'ios/Runner/Assets.xcassets/AppIcon.appiconset');
+  copyDir('tool/branding/android', 'android/app/src/main/res', recursive: true);
+  _ok(copied == 0 ? 'App icon already installed' : 'Installed the app icon');
+}
+
+bool _sameBytes(List<int> a, List<int> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
 }
 
 File? _find(Directory root, String name) {

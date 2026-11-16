@@ -21,11 +21,11 @@ flutter run
 - adds the photo library messages iPhone requires to `Info.plist`;
 - adds the AdMob app ids (Google's test ids) to Android and iPhone, and raises Android to API 24 / iPhone to iOS 13 if lower (needed by the ads and subscription plugins).
 
-To demo the subscription on the iPhone Simulator, use test mode, where purchases are simulated and no money is charged:
+- names the app "DataMuncher" and installs its icon (`tool/branding/`).
 
-```
-flutter run --dart-define=BILLING=test
-```
+**Billing mode.** Debug builds (`flutter run`) use **test mode**: subscribing is simulated and no money is charged, so the simulator and demos just work. Release builds always use the real App Store / Google Play. Override with `--dart-define=BILLING=store` (e.g. to try Apple's sandbox) or `--dart-define=BILLING=test`.
+
+**Demo photos.** `tool/demo_photos/` has seven photos made for the scan: two duplicate pairs, a blurry photo, a black "pocket photo" and one keeper. Drag them onto the simulator window. See `DEMO.md` for the full demo script.
 
 `photo_manager` must be 3.x or later (it provides `editor.android.moveToTrash`). Test emptying the bin on an iPhone and on an Android 11+ phone, and unused apps on an Android phone or emulator; those only show up on a real device.
 
@@ -118,7 +118,7 @@ Same detection rules as `UnusedAppDetector` in Devin's scan engine (DAT-1); `Ins
 6. On Android the app checks at each launch that the subscription is still active and brings ads back if it has ended. (On iPhone it doesn't check by itself, because a restore can ask the user to sign in; see limits.)
 7. The screen states the billing terms the stores require: billed monthly, renews automatically, how and when to cancel, per store.
 8. If the subscription can't be offered (store unreachable, product not set up), the screen says so with Try again.
-9. Test mode (`--dart-define=BILLING=test`) shows a clear "Test mode: no money is charged" notice, asks before a test purchase, and has **End test subscription** to switch back.
+9. Test mode (the default in debug builds, or `--dart-define=BILLING=test`) shows a clear "Test mode: no money is charged" notice, asks before a test purchase, and has **End test subscription** to switch back.
 
 ## Known limits / open decisions
 
@@ -138,4 +138,10 @@ Same detection rules as `UnusedAppDetector` in Devin's scan engine (DAT-1); `Ins
 - **No compression or time limit in the bin yet.** The bin is a list of ids, so files never show as compressed and have no expiry until DAT-17 (bin storage) is built.
 - **Recover is one file at a time.** Selecting several files belongs to DAT-29.
 - **Sizes are read from each file the first time**, which can be slow for iCloud photos; they're cached afterwards.
-- Not compiled here (no Flutter SDK available). All Dart and Kotlin files pass a syntax check, and the setup script's edits were checked against Flutter's current Android and iOS templates.
+## How this was checked
+
+- `dart analyze` with `flutter_lints` against **Flutter 3.47.9** and the real plugin sources: no issues in `lib/`, `test/` or `tool/`.
+- The non-UI tests (92: scan rules, formatting, Garbage Bin queries and Empty Bin reports, Do-not-collect list, unused-app rules and controller, subscription logic) were run on the Dart VM.
+- The demo photos were run through the app's real scan rules (`rules.dart`): 2 duplicates, 1 blurry, 1 black screen, 3 kept.
+- `tool/setup_platforms.dart` was run twice on a project built from Flutter 3.47.9's own `flutter create` templates.
+- Not run here: the widget (screen) tests and the app on a device, which need Flutter's engine. Run `flutter test` and try it on the simulator.

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -24,10 +25,12 @@ import 'presentation/monetization/plans_screen.dart';
 /// installed yourself.
 const int unusedAppDays = int.fromEnvironment('UNUSED_APP_DAYS', defaultValue: 90);
 
-/// Subscription billing (DAT-39): `store` (App Store / Google Play, the
-/// default) or `test` for demos and the simulator, where purchases are
-/// simulated: `flutter run --dart-define=BILLING=test`.
-const String billingMode = String.fromEnvironment('BILLING', defaultValue: 'store');
+/// Subscription billing (DAT-39): `store` (App Store / Google Play) or
+/// `test`, where purchases are simulated and no money is charged.
+/// Debug builds (`flutter run`) default to test, so demos and the simulator
+/// just work; release builds always default to the real store. Force either
+/// with `--dart-define=BILLING=store` or `--dart-define=BILLING=test`.
+const String billingMode = String.fromEnvironment('BILLING', defaultValue: kReleaseMode ? 'store' : 'test');
 
 SubscriptionGateway createSubscriptionGateway() =>
     billingMode == 'test' ? TestSubscriptionGateway() : StoreSubscriptionGateway();
@@ -162,7 +165,7 @@ class _HomePageState extends State<HomePage> {
         body: SafeArea(
           child: ListenableBuilder(
             listenable: Listenable.merge([s, apps, money]),
-            builder: (_, __) => ListView(padding: const EdgeInsets.all(16), children: [
+            builder: (_, _) => ListView(padding: const EdgeInsets.all(16), children: [
               Row(children: [
                 Expanded(
                   child: FittedBox(
