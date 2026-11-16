@@ -9,7 +9,10 @@
 //   2. removes Flutter's sample test (it looks for a MyApp that doesn't exist),
 //   3. adds photo, usage-access and uninstall permissions to Android,
 //   4. installs MainActivity.kt (unused app detection, DAT-25),
-//   5. adds the photo library messages iPhone requires to Info.plist.
+//   5. adds the photo library messages iPhone requires to Info.plist,
+//   6. adds the AdMob app ids (DAT-38) to Android and iPhone,
+//   7. raises Android to API 24 and iPhone to iOS 13 if lower, which the
+//      ads and subscription plugins (DAT-38, DAT-39) need.
 
 import 'dart:io';
 
@@ -44,11 +47,25 @@ const _queryIntents = '''
             <category android:name="android.intent.category.HOME" />
         </intent>''';
 
+// Google's published AdMob *test* app ids. Replace with the team's real
+// ids from the AdMob console before releasing (and the banner ids, see
+// lib/data/ads/ad_provider.dart).
+const _admobAppIdAndroid = 'ca-app-pub-3940256099942544~3347511713';
+const _admobAppIdIos = 'ca-app-pub-3940256099942544~1458002511';
+const _admobMetaName = 'com.google.android.gms.ads.APPLICATION_ID';
+
+const _gradleKts = 'android/app/build.gradle.kts';
+const _gradleGroovy = 'android/app/build.gradle';
+const _podfile = 'ios/Podfile';
+const _minAndroidSdk = 24;
+
 const _plistEntries = {
   'NSPhotoLibraryUsageDescription':
       'DataMuncher scans your photos to find duplicates and blurry shots.',
   'NSPhotoLibraryAddUsageDescription':
       'DataMuncher needs this to restore or remove photos.',
+  // DAT-38: required by the Google Mobile Ads SDK, or the app closes at launch.
+  'GADApplicationIdentifier': _admobAppIdIos,
 };
 
 Future<void> main() async {
@@ -64,6 +81,8 @@ Future<void> main() async {
   _patchManifest();
   _installMainActivity();
   _patchInfoPlist();
+  _raiseAndroidMinSdk();
+  _raiseIosTarget();
 
   stdout.writeln('\nDone. Next:\n'
       '  flutter pub get\n'
@@ -132,6 +151,17 @@ void _patchManifest() {
     }
   }
 
+  if (!xml.contains(_admobMetaName)) {
+    final end = xml.lastIndexOf('</application>');
+    if (end < 0) _fail('Unexpected $_manifestPath: no </application> tag');
+    xml = xml.replaceRange(end, end,
+        '    <!-- DataMuncher: AdMob app id (DAT-38). Test id; replace before release. -->\n'
+        '        <meta-data\n'
+        '            android:name="$_admobMetaName"\n'
+        '            android:value="$_admobAppIdAndroid" />\n'
+        '    ');
+  }
+
   if (xml == original) {
     _ok('Android permissions already set');
   } else {
@@ -189,7 +219,70 @@ void _patchInfoPlist() {
   if (end < 0) _fail('Unexpected $_plistPath: no </dict>');
   plist = plist.replaceRange(end, end, additions.toString());
   file.writeAsStringSync(plist);
-  _ok('Added photo library messages to $_plistPath');
+  _ok('Added photo library messages and the AdMob id to $_plistPath');
+}
+
+/// google_mobile_ads needs Android 7.0 (API 24) or newer.
+void _raiseAndroidMinSdk() {
+  final kts = File(_gradleKts);
+  final groovy = File(_gradleGroovy);
+  final file = kts.existsSync() ? kts : (groovy.existsSync() ? groovy : null);
+  if (file == null) {
+    _ok('No Android build file (skipping minSdk)');
+    return;
+  }
+  var text = file.readAsStringSync();
+  final original = text;
+  final isKts = file.path.endsWith('.kts');
+  final maxCall = isKts
+      ? 'maxOf(flutter.minSdkVersion, $_minAndroidSdk)'
+      : 'Math.max(flutter.minSdkVersion, $_minAndroidSdk)';
+
+  // minSdk = flutter.minSdkVersion  /  minSdkVersion flutter.minSdkVersion
+  text = text.replaceAllMapped(
+    RegExp(r'(minSdk(?:Version)?\s*=?\s*)flutter\.minSdkVersion\b'),
+    (m) => '${m[1]}$maxCall',
+  );
+  // A plain number lower than 24.
+  text = text.replaceAllMapped(
+    RegExp(r'(minSdk(?:Version)?\s*=?\s*)(\d+)\b'),
+    (m) => int.parse(m[2]!) < _minAndroidSdk ? '${m[1]}$_minAndroidSdk' : m[0]!,
+  );
+
+  if (text == original) {
+    _ok('Android minSdk already $_minAndroidSdk or higher');
+  } else {
+    file.writeAsStringSync(text);
+    _ok('Set Android minSdk to at least $_minAndroidSdk in ${file.path}');
+  }
+}
+
+/// The ads and subscription plugins need iOS 13 or newer.
+void _raiseIosTarget() {
+  final file = File(_podfile);
+  if (!file.existsSync()) {
+    _ok('No $_podfile yet (Flutter creates it on the first iPhone build)');
+    return;
+  }
+  final text = file.readAsStringSync();
+  final line = RegExp(r"^#?\s*platform :ios, '(\d+)(?:\.\d+)?'", multiLine: true)
+      .firstMatch(text);
+  if (line == null) {
+    _ok('No iOS platform line in $_podfile (Flutter sets the target)');
+    return;
+  }
+  final commented = line[0]!.startsWith('#');
+  final version = int.parse(line[1]!);
+  if (version >= 13 && !commented) {
+    _ok('iOS target already $version');
+    return;
+  }
+  if (version >= 13 && commented) {
+    _ok('iOS target left to Flutter (iOS $version)');
+    return;
+  }
+  file.writeAsStringSync(text.replaceRange(line.start, line.end, "platform :ios, '13.0'"));
+  _ok("Set iOS target to 13.0 in $_podfile");
 }
 
 File? _find(Directory root, String name) {

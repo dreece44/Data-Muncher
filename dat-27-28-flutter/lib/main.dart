@@ -1,19 +1,36 @@
 import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'application/apps/unused_apps.dart';
 import 'application/apps/unused_apps_controller.dart';
+import 'application/monetization/monetization_controller.dart';
+import 'application/monetization/subscription_gateway.dart';
 import 'core.dart';
+import 'data/ads/ad_provider.dart';
 import 'data/apps/app_inventory.dart';
+import 'data/monetization/shared_prefs_plan_store.dart';
+import 'data/monetization/store_subscription_gateway.dart';
+import 'data/monetization/test_subscription_gateway.dart';
 import 'pages.dart';
 import 'presentation/apps/app_icon.dart';
 import 'presentation/apps/unused_apps_screen.dart';
+import 'presentation/monetization/ad_banner_slot.dart';
+import 'presentation/monetization/plans_screen.dart';
 
 /// Days an app must go unopened to count as unused (DAT-25). 90 normally.
 /// For a demo on an emulator, where every app is new, run with
 /// `flutter run --dart-define=UNUSED_APP_DAYS=0` to list every app you
 /// installed yourself.
 const int unusedAppDays = int.fromEnvironment('UNUSED_APP_DAYS', defaultValue: 90);
+
+/// Subscription billing (DAT-39): `store` (App Store / Google Play, the
+/// default) or `test` for demos and the simulator, where purchases are
+/// simulated: `flutter run --dart-define=BILLING=test`.
+const String billingMode = String.fromEnvironment('BILLING', defaultValue: 'store');
+
+SubscriptionGateway createSubscriptionGateway() =>
+    billingMode == 'test' ? TestSubscriptionGateway() : StoreSubscriptionGateway();
 
 void main() => runApp(const DataMuncherApp());
 
@@ -47,46 +64,56 @@ class _HomePageState extends State<HomePage> {
   );
   late final AppIconCache icons = AppIconCache(_inventory.appIcon);
 
+  /// Free with ads (DAT-38) or the ad-free subscription (DAT-39).
+  final MonetizationController money =
+      MonetizationController(gateway: createSubscriptionGateway());
+  final AdProvider ads = platformAdProvider();
+
   @override
   void initState() {
     super.initState();
     s.init();
     apps.load();
+    SharedPreferences.getInstance().then((prefs) => money.init(SharedPrefsPlanStore(prefs)));
   }
 
   @override
   void dispose() {
     apps.dispose();
+    money.dispose();
     super.dispose();
   }
 
-  void _openUnusedApps() => Navigator.push(
+  void _openPlans() => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => PlansScreen(monetization: money)),
+      );
+
+  /// Opens [page] with the free plan's banner under it.
+  Future<void> _push(Widget page) => Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => UnusedAppsScreen(
-            controller: apps,
-            icons: icons,
-            onOpenDoNotCollect: _openDoNotCollect,
-          ),
+          builder: (_) => WithAdBanner(monetization: money, ads: ads, onRemoveAds: _openPlans, child: page),
         ),
       );
 
-  void _openDoNotCollect() => Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => DoNotCollectPage(
-            s,
-            appIcon: (pkg) => AppIcon(packageName: pkg, cache: icons),
-          ),
-        ),
-      );
+  void _openUnusedApps() => _push(UnusedAppsScreen(
+        controller: apps,
+        icons: icons,
+        onOpenDoNotCollect: _openDoNotCollect,
+      ));
+
+  void _openDoNotCollect() => _push(DoNotCollectPage(
+        s,
+        appIcon: (pkg) => AppIcon(packageName: pkg, cache: icons),
+      ));
 
   Future<void> _rescan() async {
     await Future.wait([s.scan(), apps.load()]);
   }
 
   void _open(String title, List<AssetEntity> list, {bool pre = true}) =>
-      Navigator.push(context, MaterialPageRoute(builder: (_) => ReviewPage(s, title, list, preselect: pre)));
+      _push(ReviewPage(s, title, list, preselect: pre));
 
   Future<void> _munch() async {
     if (!s.scanned) await s.scan();
@@ -131,9 +158,10 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
+        bottomNavigationBar: AdBannerSlot(monetization: money, ads: ads, onRemoveAds: _openPlans),
         body: SafeArea(
           child: ListenableBuilder(
-            listenable: Listenable.merge([s, apps]),
+            listenable: Listenable.merge([s, apps, money]),
             builder: (_, __) => ListView(padding: const EdgeInsets.all(16), children: [
               Row(children: [
                 Expanded(
@@ -147,7 +175,7 @@ class _HomePageState extends State<HomePage> {
                 IconButton(
                   tooltip: 'Garbage Bin (${s.bin.length})',
                   icon: Badge(label: Text('${s.bin.length}'), isLabelVisible: s.bin.isNotEmpty, child: const Icon(Icons.delete_outline)),
-                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => BinPage(s))),
+                  onPressed: () => _push(BinPage(s)),
                 ),
               ]),
               const SizedBox(height: 20),
@@ -204,6 +232,11 @@ class _HomePageState extends State<HomePage> {
                 onPressed: _openDoNotCollect,
                 icon: const Icon(Icons.shield_outlined, size: 18),
                 label: Text('Do-not-collect list (${s.exclusions.count()})'),
+              ),
+              TextButton.icon(
+                onPressed: _openPlans,
+                icon: Icon(money.plan == Plan.adFree ? Icons.verified_outlined : Icons.block, size: 18),
+                label: Text(money.plan == Plan.adFree ? 'Plan: Ad-free' : 'Plan: Free · Remove ads'),
               ),
             ]),
           ),

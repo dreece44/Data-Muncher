@@ -1,6 +1,6 @@
-# DataMuncher app — Garbage Bin (DAT-27, DAT-28), Unused apps (DAT-25), Do not collect (DAT-32)
+# DataMuncher app — Garbage Bin (DAT-27, 28), Unused apps (DAT-25), Do not collect (DAT-32), Free with ads (DAT-38), Ad-free subscription (DAT-39)
 
-Built on the photo-library draft app (`core.dart`, `pages.dart`, `rules.dart`, `main.dart`), which is included here because it isn't on GitHub yet. Sprint 2 added the Garbage Bin; Sprint 3 adds unused app detection and the Do-not-collect list.
+Built on the photo-library draft app (`core.dart`, `pages.dart`, `rules.dart`, `main.dart`), which is included here because it isn't on GitHub yet. Sprint 2 added the Garbage Bin; Sprint 3 unused app detection and the Do-not-collect list; Sprint 4 the free-with-ads plan and the optional ad-free subscription.
 
 ## Setting this up
 
@@ -18,7 +18,14 @@ flutter run
 - runs `flutter create` if `android/` or `ios/` is missing, and removes Flutter's sample test;
 - adds the photo, usage-access and uninstall permissions to `AndroidManifest.xml`;
 - installs the Android code for unused apps into `MainActivity.kt` (edit `tool/android/MainActivity.kt`, not the generated copy);
-- adds the photo library messages iPhone requires to `Info.plist`.
+- adds the photo library messages iPhone requires to `Info.plist`;
+- adds the AdMob app ids (Google's test ids) to Android and iPhone, and raises Android to API 24 / iPhone to iOS 13 if lower (needed by the ads and subscription plugins).
+
+To demo the subscription on the iPhone Simulator, use test mode, where purchases are simulated and no money is charged:
+
+```
+flutter run --dart-define=BILLING=test
+```
 
 `photo_manager` must be 3.x or later (it provides `editor.android.moveToTrash`). Test emptying the bin on an iPhone and on an Android 11+ phone, and unused apps on an Android phone or emulator; those only show up on a real device.
 
@@ -35,6 +42,10 @@ flutter run
 | Presentation | `lib/presentation/garbage_bin/` — Garbage Bin screen, list rows, details sheet, text formatting |
 | | `lib/presentation/apps/` — Unused Apps screen, app icons |
 | | `lib/presentation/exclusion/` — Do-not-collect screen, period picker |
+| | `lib/application/monetization/` — plans, `MonetizationController`, `SubscriptionGateway` interface |
+| | `lib/data/monetization/` — App Store / Google Play billing, test mode, saved plan |
+| | `lib/data/ads/` — AdMob banners (`AdProvider`) |
+| | `lib/presentation/monetization/` — Plans screen, banner slot |
 | Android | `tool/android/MainActivity.kt` — usage history, installed apps, sizes, icons, uninstall dialog |
 | App wiring | `lib/main.dart` (home buttons), `lib/pages.dart` (`BinPage`, `ReviewPage`, `DoNotCollectPage`), `lib/core.dart` (`MunchState`) |
 
@@ -88,7 +99,34 @@ Same detection rules as `UnusedAppDetector` in Devin's scan engine (DAT-1); `Ins
 5. Allow removes a mark early, with Undo.
 6. Marks survive restarting the app; ended marks are cleared automatically. Marks made with the earlier version (30 days, no name) are carried over.
 
+## DAT-38 — Ad-supported free tier: acceptance criteria
+
+1. The app is free, and **every feature works on the free plan**. Ads never block, delay or unlock anything: there are no pop-up (interstitial) ads and no "watch an ad to unlock".
+2. On the free plan, a small banner ad sits at the bottom of the home screen and the other screens (Garbage Bin, review pages, Unused apps, Do-not-collect list), below the content, never over it. The Plans screen has none.
+3. Each banner has a **Remove ads** link to the Plans screen.
+4. If an ad can't load (offline, no ad available), nothing is shown: no empty gap and no error.
+5. The ad SDK isn't even started for ad-free users.
+6. Uses Google AdMob with Google's official **test** ids, which show a "Test Ad" and pay nothing.
+
+## DAT-39 — Ad-free subscription: acceptance criteria
+
+1. A **Plans** screen (home → "Plan: Free · Remove ads", or any banner's Remove ads) compares Free and Ad-free and says plainly that both include every feature.
+2. The price comes from the App Store / Google Play in the user's currency, shown as e.g. "$0.99 / month".
+3. **Go ad-free** opens the store's own purchase sheet. When it completes, every banner disappears at once and the plan is remembered across restarts.
+4. Cancelling the store sheet changes nothing; a failed payment says why; Ask to Buy shows "waiting for approval" and goes ad-free when approved.
+5. **Restore purchases** finds an existing subscription on a new phone or after reinstalling.
+6. On Android the app checks at each launch that the subscription is still active and brings ads back if it has ended. (On iPhone it doesn't check by itself, because a restore can ask the user to sign in; see limits.)
+7. The screen states the billing terms the stores require: billed monthly, renews automatically, how and when to cancel, per store.
+8. If the subscription can't be offered (store unreachable, product not set up), the screen says so with Try again.
+9. Test mode (`--dart-define=BILLING=test`) shows a clear "Test mode: no money is charged" notice, asks before a test purchase, and has **End test subscription** to switch back.
+
 ## Known limits / open decisions
+
+- **Price (DAT-39 open question).** The app shows whatever price is set in the stores. Test mode uses a proposed **$0.99/month**; the team needs to confirm it.
+- **Before release, the stores need setting up:** create a monthly auto-renewing subscription with product id `datamuncher_ad_free_monthly` in App Store Connect and the Google Play Console. Until then, real-billing builds show "subscription isn't available".
+- **Real ads need an AdMob account:** replace Google's test app ids (`tool/setup_platforms.dart`) and banner ids (`--dart-define=ADMOB_BANNER_IOS=…` / `ADMOB_BANNER_ANDROID=…`). Never click real ads during testing.
+- **Privacy consent isn't built yet.** Before releasing in the EU/UK, ads need Google's consent form (UMP), and on iPhone the App Tracking Transparency prompt if ads are personalised.
+- **Subscriptions are checked on the phone only.** Without a server that verifies receipts, an iPhone keeps "Ad-free" after the subscription ends until the user restores purchases, and a restore can count an ended iPhone subscription. A receipt-checking server would fix both.
 
 - **The "defined period of time" is 30 days** (team decision for DAT-32), set in one place: `exclusionPeriod` in `lib/application/exclusion/exclusion_list.dart`. Marking something again restarts its 30 days.
 - **Unused apps is Android only.** iOS doesn't let apps see other apps. Usage access is a special permission the user turns on in Settings; it can't be granted from a pop-up.

@@ -1,5 +1,5 @@
 name: datamuncher
-description: DataMuncher photo-library app — Garbage Bin (DAT-27, DAT-28), unused apps (DAT-25) and Do not collect (DAT-32).
+description: DataMuncher photo-library app — Garbage Bin (DAT-27, DAT-28), unused apps (DAT-25), Do not collect (DAT-32), free with ads (DAT-38) and ad-free subscription (DAT-39).
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -15,6 +15,10 @@ dependencies:
   image: ^4.2.0
   shared_preferences: ^2.3.0
   disk_space_plus: ^0.2.3
+  # DAT-38 ads and DAT-39 subscription. Wide ranges so `flutter pub get`
+  # picks the newest version that works with your Flutter.
+  google_mobile_ads: ">=5.1.0 <10.0.0"
+  in_app_purchase: ">=3.1.13 <4.0.0"
 
 dev_dependencies:
   flutter_test:
