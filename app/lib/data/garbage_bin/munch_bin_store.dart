@@ -4,14 +4,16 @@ import 'package:photo_manager/photo_manager.dart';
 
 import '../../core.dart';
 import 'bin_entry.dart';
+import 'file_bin.dart';
 import 'garbage_bin_store.dart';
 
 /// [GarbageBinStore] backed by the app's [MunchState].
 ///
-/// In this version bin items stay where they are in the photo library (the
-/// bin is a list of ids), so nothing is compressed yet and the space used in
-/// the bin equals the file's size. There is no retention limit either, so
-/// files stay until recovered or the bin is emptied.
+/// Photo library items stay where they are (the bin is a list of ids);
+/// storage files from the storage scan are moved into a hidden bin folder
+/// (see [FileBin]). Nothing is compressed yet, so the space used in the bin
+/// equals the file's size. There is no retention limit either, so files stay
+/// until recovered or the bin is emptied.
 class MunchBinStore implements GarbageBinStore {
   MunchBinStore(this.state) : _lastRevision = state.binRevision {
     state.addListener(_onStateChanged);
@@ -28,6 +30,9 @@ class MunchBinStore implements GarbageBinStore {
 
   /// The library asset behind a bin entry, once it has been loaded.
   AssetEntity? assetFor(String id) => _assets[id];
+
+  /// Where a storage file in the bin is kept, or null for library items.
+  String? storedPathFor(String id) => state.fileBin[id]?.storedPath;
 
   void _onStateChanged() {
     if (state.binRevision == _lastRevision) return;
@@ -58,6 +63,22 @@ class MunchBinStore implements GarbageBinStore {
         originalSizeBytes: size,
         storedSizeBytes: size,
         collectedAt: info?.collectedAt ?? DateTime.now(),
+      ));
+    }
+    for (final record in state.fileBin.records.toList()) {
+      if (!await state.fileBin.isStored(record.id)) {
+        missing.add(record.id); // removed from the bin folder by hand
+        continue;
+      }
+      entries.add(BinEntry(
+        id: record.id,
+        fileName: record.fileName,
+        originalPath: record.originalPath,
+        category: fileCategoryFor(record.fileName),
+        reason: record.reason,
+        originalSizeBytes: record.sizeBytes,
+        storedSizeBytes: record.sizeBytes,
+        collectedAt: record.collectedAt,
       ));
     }
     // Clean them out of the bin. This fires one more change, and the reload

@@ -1,0 +1,23 @@
+name: scan_engine
+description: >-
+  DataMuncher scanning engine. Walks device storage and identifies wasted
+  space: empty files, unreadable files, duplicate photos, blank photos and
+  unused apps. Pure Dart so it runs on phones and on a development computer.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  args: ^2.5.0
+  crypto: ^3.0.3
+  image: ^4.2.0
+  path: ^1.9.0
+
+dev_dependencies:
+  lints: ">=4.0.0 <7.0.0"
+  test: ^1.25.0
+
+executables:
+  scan: scan

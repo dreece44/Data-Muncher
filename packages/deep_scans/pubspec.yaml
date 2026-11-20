@@ -1,0 +1,31 @@
+name: deep_scans
+description: >-
+  DataMuncher focused deep scans. Each scan targets one kind of waste in more
+  depth than the mass scan in scan_engine, so it can be tested and tuned on
+  its own before being merged back into the mass scan.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  archive: ^4.0.0
+  args: ^2.5.0
+  crypto: ^3.0.3
+  image: ^4.2.0
+  path: ^1.9.0
+  scan_engine:
+    path: ../scan_engine
+
+dev_dependencies:
+  lints: ">=4.0.0 <7.0.0"
+  test: ^1.25.0
+
+executables:
+  empty_unreadable_scan: empty_unreadable_scan
+  duplicate_photo_scan: duplicate_photo_scan
+  duplicate_document_scan: duplicate_document_scan
+  blurry_photo_scan: blurry_photo_scan
+  screenshot_scan: screenshot_scan
+  large_old_video_scan: large_old_video_scan
