@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'garbage_collection_storage';
+import 'garbage_collection_storage.dart';
 
 void main() {
   runApp(const MaterialApp(
