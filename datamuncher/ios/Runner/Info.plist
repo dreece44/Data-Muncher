@@ -6,6 +6,14 @@
 	<string>DataMuncher scans your photos and videos to find duplicates, empty and blurry files.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>DataMuncher returns recovered files to your photo library.</string>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.example.datamuncher.storageCheck</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+	</array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>

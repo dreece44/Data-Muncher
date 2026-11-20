@@ -11,6 +11,7 @@ The phone app that brings the team's work together.
 | Scan storage → By category | Garbage Collection: send categories to the bin | `lib/presentation/garbage_collection/` | coilehayden0 |
 | Home: Garbage storage | Compressed temporary storage (DAT-17) | `lib/presentation/garbage_storage/` | coilehayden0 |
 | Home: Scan a folder | Classifier (DAT-16) and one-tap munch (DAT-18) | `lib/models.dart`, `lib/classifier.dart`, `lib/muncher.dart`, `lib/presentation/folder_munch/` | nathangh-ung |
+| Notification + home banner | Storage-full warning (DAT-36) | `lib/*/storage_alert/` | dreece44 |
 
 `lib/application/storage_scan/team_views.dart` and `lib/presentation/team_pages.dart`
 connect the storage scan to coilehayden0's and nathangh-ung's pages.
@@ -37,6 +38,41 @@ flutter run -t lib/presentation/garbage_storage/main.dart
 flutter run -t lib/presentation/garbage_collection/main.dart
 flutter run -t lib/presentation/folder_munch/main.dart
 ```
+
+## Storage-full notifications (DAT-36)
+
+The app warns before the phone fills up:
+
+- **Low**: less than 10% of the phone, or 5 GB, free (whichever is smaller).
+- **Almost full**: less than 5%, or 1 GB, free.
+
+The warning appears as a phone notification and as a banner on the home page.
+The banner also covers users who turned notifications off. A warning is
+repeated at most once a day at the same level. It is sent again right away if
+storage gets worse, and cleared once space is freed. Tapping it opens Scan
+storage.
+
+| | Android 7–12 | Android 13+ | iOS 15+ (iPhone, iPad) |
+|---|---|---|---|
+| Permission | Allowed by default | Asked on first launch | Asked on first launch |
+| Background check | Every hour (WorkManager), survives reboot | Same | iOS decides when (Background App Refresh) |
+| Also checked | App open, app back in front, after munching or emptying the bin | Same | Same |
+
+To try it on the emulator, fill it up below the threshold and reopen the app.
+The fill file is just zeros. Delete it afterwards:
+
+```bash
+adb shell fallocate -l 6G /sdcard/Download/fill.bin
+adb shell rm /sdcard/Download/fill.bin
+```
+
+To run the background check now instead of waiting an hour, find the app's
+WorkManager job id with `adb shell dumpsys jobscheduler` (look for
+`com.example.datamuncher`), then run `adb shell cmd jobscheduler run -f com.example.datamuncher <id>`.
+
+On iOS, Background App Refresh must be on (Settings → General). In Xcode you
+can trigger the check from the debugger with
+`e -l objc -- (void)[[BGTaskScheduler sharedScheduler] _simulateLaunchForTaskWithIdentifier:@"com.example.datamuncher.storageCheck"]`.
 
 ## Tests
 

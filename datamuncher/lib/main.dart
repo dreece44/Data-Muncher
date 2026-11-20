@@ -1,12 +1,24 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import 'application/storage_alert/storage_alert.dart';
 import 'core.dart';
+import 'data/storage_alert/storage_alert_service.dart';
 import 'pages.dart';
+import 'presentation/duplicate_groups/duplicate_groups_page.dart';
+import 'presentation/storage_alert/storage_alert_banner.dart';
 import 'presentation/storage_scan/storage_scan_page.dart';
 import 'presentation/team_pages.dart';
 
-void main() => runApp(const DataMuncherApp());
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Storage-full notifications and their background check (DAT-36).
+  unawaited(StorageAlertService.instance.start());
+  runApp(const DataMuncherApp());
+}
 
 class DataMuncherApp extends StatelessWidget {
   const DataMuncherApp({super.key});
@@ -27,11 +39,41 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final s = MunchState();
+  late final AppLifecycleListener _lifecycle;
+  StreamSubscription<void>? _alertTaps;
 
   @override
   void initState() {
     super.initState();
     s.init();
+    // Storage may have filled up while the app was in the background.
+    _lifecycle = AppLifecycleListener(onResume: s.refreshStorage);
+    _alertTaps = StorageAlertService.instance.taps.listen((_) => _openStorageScan());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _setUpStorageAlerts());
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
+    _alertTaps?.cancel();
+    super.dispose();
+  }
+
+  /// Asks once for notification permission, and opens the storage scan when
+  /// the app was started from a storage notification.
+  Future<void> _setUpStorageAlerts() async {
+    final alerts = StorageAlertService.instance;
+    if (!StorageAlertService.supported) return;
+    if (await alerts.launchedFromAlert()) _openStorageScan();
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('storageAlertAsked') ?? false) return;
+    await prefs.setBool('storageAlertAsked', true);
+    await alerts.requestPermission();
+  }
+
+  void _openStorageScan() {
+    if (!mounted) return;
+    Navigator.push(context, MaterialPageRoute(builder: (_) => StorageScanPage(s)));
   }
 
   void _open(String title, List<AssetEntity> list, {bool pre = true}) =>
@@ -99,6 +141,15 @@ class _HomePageState extends State<HomePage> {
                   onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => BinPage(s))),
                 ),
               ]),
+              if (s.storageLevel != StorageLevel.ok && s.storageReading != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: StorageAlertBanner(
+                    level: s.storageLevel,
+                    reading: s.storageReading!,
+                    onFreeUp: _openStorageScan,
+                  ),
+                ),
               const SizedBox(height: 20),
               Center(
                 child: SizedBox(
@@ -129,7 +180,8 @@ class _HomePageState extends State<HomePage> {
                       onPressed: PhotoManager.openSetting,
                       child: const Text('Photo access is needed. Tap to open settings.')),
                 ),
-              _btn('DUPLICATES', s.duplicates.length, () => _open('DUPLICATES', s.duplicates)),
+              _btn('DUPLICATES', s.duplicates.length,
+                  () => Navigator.push(context, MaterialPageRoute(builder: (_) => DuplicateGroupsPage(s)))),
               _btn('EMPTY', s.empty.length, () => _open('EMPTY', s.empty)),
               _btn('BLURRY', s.blurry.length, () => _open('BLURRY', s.blurry)),
               Row(children: [
@@ -138,8 +190,7 @@ class _HomePageState extends State<HomePage> {
                 Expanded(child: _selectTile('VIDEO\nSELECT', () => _open('VIDEOS', s.videos.toList(), pre: false))),
               ]),
               const SizedBox(height: 10),
-              _btn('SCAN STORAGE', null,
-                  () => Navigator.push(context, MaterialPageRoute(builder: (_) => StorageScanPage(s)))),
+              _btn('SCAN STORAGE', null, _openStorageScan),
               _btn('SCAN A FOLDER', null, () => openFolderMunch(context)),
               _btn('GARBAGE STORAGE', null, () => openGarbageStorage(context)),
               const SizedBox(height: 6),

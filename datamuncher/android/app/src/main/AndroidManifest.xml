@@ -5,6 +5,10 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
+    <!-- Storage-full notifications (DAT-36). Android 13+ asks the user;
+         older versions grant it automatically. The hourly background check
+         uses WorkManager, which declares its own boot permission. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application
         android:label="datamuncher"
         android:name="${applicationName}"

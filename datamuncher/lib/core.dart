@@ -8,9 +8,12 @@ import 'package:photo_manager/photo_manager.dart';
 import 'package:scan_engine_flutter/scan_engine_flutter.dart' show NativeBridge;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'application/duplicate_groups/best_copy.dart';
+import 'application/storage_alert/storage_alert.dart';
 import 'application/storage_scan/storage_scan.dart';
 import 'data/garbage_bin/bin_entry.dart';
 import 'data/garbage_bin/file_bin.dart';
+import 'data/storage_alert/storage_alert_service.dart';
 import 'rules.dart';
 
 /// Days a recovered file is protected by "Do not collect".
@@ -113,6 +116,10 @@ class MediaIndex {
 class MunchState extends ChangeNotifier {
   List<AssetEntity> all = [];
   List<AssetEntity> duplicates = [], empty = [], blurry = [];
+
+  /// Duplicates grouped, each with the copy suggested to keep (DAT-34).
+  /// [duplicates] is every copy in these groups except that one.
+  List<DuplicateGroup> duplicateGroups = [];
   Set<String> bin = {}; // Garbage Bin (asset ids)
   Map<String, BinRecord> binInfo = {}; // id -> why/when it was collected
   Map<String, int> excluded = {}; // id, or file path for storage files -> expiry (ms)
@@ -122,6 +129,12 @@ class MunchState extends ChangeNotifier {
   List<String> _storageRoots = const [];
   double usedFraction = 0, freeGb = 0, progress = 0;
   bool scanning = false, scanned = false, denied = false;
+
+  /// How full the phone is (DAT-36). Drives the warning on the home page.
+  StorageLevel storageLevel = StorageLevel.ok;
+
+  /// Latest free/total space reading; null until the phone reports one.
+  StorageReading? storageReading;
 
   /// Goes up every time the bin's contents change, so the Garbage Bin viewer
   /// can ignore the many other notifications (scan progress, storage).
@@ -178,8 +191,9 @@ class MunchState extends ChangeNotifier {
     await _p.setStringList('fileBin', fileBin.encode());
   }
 
-  /// Storage indicator data.
+  /// Storage indicator data, and the storage-full warning (DAT-36).
   Future<void> refreshStorage() async {
+    StorageReading? reading;
     try {
       final d = DiskSpacePlus();
       final free = await d.getFreeDiskSpace ?? 0; // MB
@@ -187,9 +201,24 @@ class MunchState extends ChangeNotifier {
       if (total > 0) {
         usedFraction = ((total - free) / total).clamp(0.0, 1.0);
         freeGb = free / 1024;
+        reading = StorageReading.fromMb(freeMb: free, totalMb: total);
       }
     } catch (_) {}
+    if (reading != null && reading.isValid) setStorageReading(reading);
     notifyListeners();
+    if (reading != null && reading.isValid) {
+      // Post the notification, or take it down once space is freed.
+      try {
+        await StorageAlertService.instance.check(reading: reading);
+      } catch (_) {}
+    }
+  }
+
+  /// Updates [storageLevel] from a free/total space reading.
+  @visibleForTesting
+  void setStorageReading(StorageReading reading) {
+    storageReading = reading;
+    storageLevel = StorageAlertService.instance.policy.levelOf(reading);
   }
 
   /// Mass storage scan + bad photo detection.
@@ -210,8 +239,9 @@ class MunchState extends ChangeNotifier {
     all = await paths.first.getAssetListRange(start: 0, end: count);
 
     final classifier = WasteClassifier(defaultRuleConfig);
-    final dup = <AssetEntity>[], emp = <AssetEntity>[], blu = <AssetEntity>[];
+    final emp = <AssetEntity>[], blu = <AssetEntity>[];
     final flags = <String, CollectionReason>{};
+    final copies = <DuplicateCandidate>[];
 
     for (var i = 0; i < all.length; i++) {
       final a = all[i];
@@ -225,13 +255,18 @@ class MunchState extends ChangeNotifier {
         } catch (_) {
           im = null;
         }
-        final f = AssetFeatures.fromImage(a.id, im,
-            isImage: a.type == AssetType.image, durationSec: a.duration);
-        final verdicts = classifier.classify(f);
+        final isImage = a.type == AssetType.image;
+        final f = AssetFeatures.fromImage(a.id, im, isImage: isImage, durationSec: a.duration);
+        // Duplicates are found by grouping below (DAT-34), which keeps the
+        // best copy rather than the first one seen.
+        final verdicts = [
+          for (final v in classifier.classify(f))
+            if (v.category != WasteCategory.duplicate) v
+        ];
         for (final v in verdicts) {
           switch (v.category) {
             case WasteCategory.duplicate:
-              dup.add(a);
+              break;
             case WasteCategory.empty:
               emp.add(a);
             case WasteCategory.blurry:
@@ -240,10 +275,32 @@ class MunchState extends ChangeNotifier {
         }
         final reason = reasonForVerdicts(verdicts);
         if (reason != null) flags[a.id] = reason;
+        if (im != null && reason != CollectionReason.unreadable && reason != CollectionReason.blank) {
+          copies.add(DuplicateCandidate(
+            id: a.id,
+            hash: hashFromBits(f.hash),
+            quality: isImage ? PhotoQuality.fromImage(im) : null,
+            width: a.width,
+            height: a.height,
+            taken: a.createDateTime,
+            isVideo: !isImage,
+            durationSec: a.duration,
+          ));
+        }
       }
       if (i % 10 == 0) {
         progress = i / all.length;
         notifyListeners();
+      }
+    }
+    duplicateGroups = groupDuplicates(copies);
+    final byId = {for (final a in all) a.id: a};
+    final dup = <AssetEntity>[];
+    for (final group in duplicateGroups) {
+      for (final copy in group.others) {
+        dup.add(byId[copy.id]!);
+        // Duplicate wins over blurry, as in reasonForVerdicts.
+        flags[copy.id] = CollectionReason.duplicate;
       }
     }
     duplicates = dup;
@@ -255,18 +312,31 @@ class MunchState extends ChangeNotifier {
     await refreshStorage();
   }
 
-  /// Garbage Collection: send items to the Garbage Bin.
-  Future<void> collect(Iterable<AssetEntity> items) async {
+  /// Garbage Collection: send items to the Garbage Bin. [reason] overrides
+  /// the scan's reason for each item.
+  Future<void> collect(Iterable<AssetEntity> items, {CollectionReason? reason}) async {
     final ids = items.map((a) => a.id).toSet();
     final now = DateTime.now();
     for (final id in ids) {
       if (bin.add(id)) {
-        binInfo[id] = BinRecord(_flags[id] ?? CollectionReason.manual, now);
+        binInfo[id] = BinRecord(reason ?? _flags[id] ?? CollectionReason.manual, now);
       }
     }
     for (final l in [duplicates, empty, blurry]) {
       l.removeWhere((a) => ids.contains(a.id));
     }
+    // A group that lost its suggested copy gets a new one; the duplicates
+    // list follows, so "Munch my data" never takes the last copy.
+    duplicateGroups = [
+      for (final g in duplicateGroups)
+        if (g.without(ids) case final left?) left
+    ];
+    final byId = {for (final a in all) a.id: a};
+    duplicates = [
+      for (final g in duplicateGroups)
+        for (final copy in g.others)
+          if (byId[copy.id] case final a?) a
+    ];
     binRevision++;
     await _save();
     notifyListeners();
