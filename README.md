@@ -88,7 +88,7 @@ flutter test
 | Folder | What it is |
 |---|---|
 | `app/` | The DataMuncher app: scanning, Garbage Bin, Do not collect, unused apps and plans. See `app/README.md` for how it's built. |
-| `hayden-screens/` | Garbage Bin storage screens: compressed backups, bulk delete, restore and export. Run on its own with `flutter run` from that folder. |
+| `hayden-screens/` | Garbage Bin storage screens: compressed backups, bulk delete, restore and export (`flutter run` from that folder), and the Storage Results and swipe-review page (`flutter run -t lib/storage_results.dart`). |
 
 ## Team
 
