@@ -73,7 +73,7 @@ Future<void> main() async {
   if (!File('pubspec.yaml').existsSync() || !File(_activityTemplate).existsSync()) {
     _fail('Run this from the DataMuncher project folder (the one with '
         'pubspec.yaml and tool/), e.g.\n'
-        '  cd ~/Data-Muncher/dat-27-28-flutter\n'
+        '  cd ~/Data-Muncher/app\n'
         '  dart run tool/setup_platforms.dart');
   }
 
