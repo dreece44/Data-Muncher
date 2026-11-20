@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
@@ -7,17 +9,23 @@ import 'application/apps/unused_apps.dart';
 import 'application/apps/unused_apps_controller.dart';
 import 'application/monetization/monetization_controller.dart';
 import 'application/monetization/subscription_gateway.dart';
+import 'application/storage_alert/storage_alert.dart';
 import 'core.dart';
 import 'data/ads/ad_provider.dart';
 import 'data/apps/app_inventory.dart';
 import 'data/monetization/shared_prefs_plan_store.dart';
 import 'data/monetization/store_subscription_gateway.dart';
 import 'data/monetization/test_subscription_gateway.dart';
+import 'data/storage_alert/storage_alert_service.dart';
 import 'pages.dart';
 import 'presentation/apps/app_icon.dart';
 import 'presentation/apps/unused_apps_screen.dart';
+import 'presentation/duplicate_groups/duplicate_groups_page.dart';
 import 'presentation/monetization/ad_banner_slot.dart';
 import 'presentation/monetization/plans_screen.dart';
+import 'presentation/storage_alert/storage_alert_banner.dart';
+import 'presentation/storage_scan/storage_scan_page.dart';
+import 'presentation/team_pages.dart';
 
 /// Days an app must go unopened to count as unused (DAT-25). 90 normally.
 /// For a demo on an emulator, where every app is new, run with
@@ -35,7 +43,12 @@ const String billingMode = String.fromEnvironment('BILLING', defaultValue: kRele
 SubscriptionGateway createSubscriptionGateway() =>
     billingMode == 'test' ? TestSubscriptionGateway() : StoreSubscriptionGateway();
 
-void main() => runApp(const DataMuncherApp());
+void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Storage-full notifications and their background check (DAT-36).
+  unawaited(StorageAlertService.instance.start());
+  runApp(const DataMuncherApp());
+}
 
 class DataMuncherApp extends StatelessWidget {
   const DataMuncherApp({super.key});
@@ -56,6 +69,8 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final s = MunchState();
+  late final AppLifecycleListener _lifecycle;
+  StreamSubscription<void>? _alertTaps;
 
   /// Unused app detection (DAT-25). Android only; on iPhone the screen
   /// explains why it isn't possible.
@@ -78,13 +93,36 @@ class _HomePageState extends State<HomePage> {
     s.init();
     apps.load();
     SharedPreferences.getInstance().then((prefs) => money.init(SharedPrefsPlanStore(prefs)));
+    // Storage may have filled up while the app was in the background.
+    _lifecycle = AppLifecycleListener(onResume: s.refreshStorage);
+    _alertTaps = StorageAlertService.instance.taps.listen((_) => _openStorageScan());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _setUpStorageAlerts());
   }
 
   @override
   void dispose() {
+    _lifecycle.dispose();
+    _alertTaps?.cancel();
     apps.dispose();
     money.dispose();
     super.dispose();
+  }
+
+  /// Asks once for notification permission, and opens the storage scan when
+  /// the app was started from a storage notification.
+  Future<void> _setUpStorageAlerts() async {
+    final alerts = StorageAlertService.instance;
+    if (!StorageAlertService.supported) return;
+    if (await alerts.launchedFromAlert()) _openStorageScan();
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('storageAlertAsked') ?? false) return;
+    await prefs.setBool('storageAlertAsked', true);
+    await alerts.requestPermission();
+  }
+
+  void _openStorageScan() {
+    if (!mounted) return;
+    _push(StorageScanPage(s));
   }
 
   void _openPlans() => Navigator.push(
@@ -176,11 +214,20 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ),
                 IconButton(
-                  tooltip: 'Garbage Bin (${s.bin.length})',
-                  icon: Badge(label: Text('${s.bin.length}'), isLabelVisible: s.bin.isNotEmpty, child: const Icon(Icons.delete_outline)),
+                  tooltip: 'Garbage Bin (${s.binCount})',
+                  icon: Badge(label: Text('${s.binCount}'), isLabelVisible: s.binCount > 0, child: const Icon(Icons.delete_outline)),
                   onPressed: () => _push(BinPage(s)),
                 ),
               ]),
+              if (s.storageLevel != StorageLevel.ok && s.storageReading != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: StorageAlertBanner(
+                    level: s.storageLevel,
+                    reading: s.storageReading!,
+                    onFreeUp: _openStorageScan,
+                  ),
+                ),
               const SizedBox(height: 20),
               Center(
                 child: SizedBox(
@@ -211,7 +258,8 @@ class _HomePageState extends State<HomePage> {
                       onPressed: PhotoManager.openSetting,
                       child: const Text('Photo access is needed. Tap to open settings.')),
                 ),
-              _btn('DUPLICATES', s.duplicates.length, () => _open('DUPLICATES', s.duplicates)),
+              _btn('DUPLICATES', s.duplicates.length,
+                  () => _push(DuplicateGroupsPage(s))),
               _btn('EMPTY', s.empty.length, () => _open('EMPTY', s.empty)),
               _btn('BLURRY', s.blurry.length, () => _open('BLURRY', s.blurry)),
               _btn('UNUSED APPS', apps.count, _openUnusedApps),
@@ -220,7 +268,11 @@ class _HomePageState extends State<HomePage> {
                 const SizedBox(width: 12),
                 Expanded(child: _selectTile('VIDEO\nSELECT', () => _open('VIDEOS', s.videos.toList(), pre: false))),
               ]),
-              const SizedBox(height: 16),
+              const SizedBox(height: 10),
+              _btn('SCAN STORAGE', null, _openStorageScan),
+              _btn('SCAN A FOLDER', null, () => openFolderMunch(context)),
+              _btn('GARBAGE STORAGE', null, () => openGarbageStorage(context)),
+              const SizedBox(height: 6),
               FilledButton(
                 onPressed: s.scanning ? null : _munch,
                 style: FilledButton.styleFrom(

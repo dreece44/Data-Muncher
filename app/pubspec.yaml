@@ -1,5 +1,5 @@
 name: datamuncher
-description: DataMuncher photo-library app — Garbage Bin (DAT-27, DAT-28), unused apps (DAT-25), Do not collect (DAT-32), free with ads (DAT-38) and ad-free subscription (DAT-39).
+description: DataMuncher — finds wasted space on a phone and clears it safely. The whole team's work in one app (see README).
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -19,9 +19,19 @@ dependencies:
   # picks the newest version that works with your Flutter.
   google_mobile_ads: ">=5.1.0 <10.0.0"
   in_app_purchase: ">=3.1.13 <4.0.0"
+  path: ^1.9.0
+  scan_engine_flutter:           # DAT-1 scan engine + Android/iOS device adapters
+    path: ../packages/scan_engine_flutter
+  file_picker: ^10.3.0           # DAT-17 garbage storage, DAT-18 folder scan (8.x targets API 34, too old)
+  archive: ^4.0.0                # DAT-17 compression (4.x, the line image uses)
+  crypto: ^3.0.3                 # DAT-16 duplicate hashing
+  flutter_local_notifications: ^22.3.3  # DAT-36 storage alerts (23.x needs compileSdk 37 + AGP 9.1.1)
+  workmanager: ^0.10.10          # DAT-36 background storage check (Android WorkManager, iOS BGTaskScheduler)
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  integration_test:
     sdk: flutter
   flutter_lints: ">=5.0.0 <7.0.0"
 

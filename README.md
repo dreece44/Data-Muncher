@@ -6,9 +6,11 @@ DataMuncher is a mobile app built with Flutter and Dart that finds wasted space 
 
 ### Scanning
 - **Munch My Data**: One-tap scan of the photo library.
-- **Duplicate Photos**: Finds copies of the same photo and keeps one.
+- **Duplicate Photos**: Groups copies of the same photo or video and picks the sharpest, largest one to keep.
 - **Blurry Photos**: Flags shots that are out of focus.
 - **Empty Photos**: Flags black or blank "pocket photos".
+- **Scan Storage**: Scans all of the phone's shared storage (Android) or the Photos library and chosen folders (iPhone) for empty, unreadable, duplicate and large old files, with a summary and swipe-to-review.
+- **Scan a Folder**: Classifies the files in a folder you pick and munches the waste in one tap.
 - **Review Results**: Shows what the scan found, grouped as duplicates, blurry and empty, before anything is collected.
 
 ### Garbage Bin
@@ -16,11 +18,15 @@ DataMuncher is a mobile app built with Flutter and Dart that finds wasted space 
 - **Search, Sort and Filter**: By name, folder, reason, type, size or date.
 - **Recover a File**: Put a file back if it was collected by mistake.
 - **Empty the Bin**: Moves files to the phone's Recently Deleted, so they can still be recovered for 30 days.
+- **Garbage Storage**: Compressed temporary storage for files you aren't ready to delete, with restore and export.
 - **Bulk Delete with Backups**: Delete many files at once into compressed backups that are kept for a set time.
 
 ### Safety
 - **Do Not Collect**: Mark a file or app so scans leave it alone for 30 days.
 - **Manage the List**: See everything marked, allow it again or undo.
+
+### Storage Alerts
+- **Storage Almost Full**: A notification and a home-page banner when the phone is low on space, checked in the background. Tapping it opens Scan Storage.
 
 ### Apps
 - **Unused Apps** (Android): Lists apps not opened in 90 days with their size, and opens Android's uninstall screen. Essential, system and recently installed apps are never suggested.
@@ -87,13 +93,15 @@ flutter test
 
 | Folder | What it is |
 |---|---|
-| `app/` | The DataMuncher app: scanning, Garbage Bin, Do not collect, unused apps and plans. See `app/README.md` for how it's built. |
-| `hayden-screens/` | Garbage Bin storage screens: compressed backups, bulk delete, restore and export (`flutter run` from that folder), and the Storage Results and swipe-review page (`flutter run -t lib/storage_results.dart`). |
+| `app/` | The DataMuncher app: everything above, from every team member. See `app/README.md` for how it's built and who built what. |
+| `packages/scan_engine/` | The storage scan engine (DAT-1) in plain Dart, with a sample phone for testing. |
+| `packages/scan_engine_flutter/` | Connects the scan engine to real Android and iPhone storage, photos and apps. |
+| `packages/deep_scans/` | Focused scans: duplicate documents and photos, blurry photos, screenshots, empty files, large old videos (DAT-3, DAT-20 to DAT-24). |
 
 ## Team
 
 | Member | Work |
 |---|---|
 | Nathan Kim | App UI, file classification rules, Munch My Data, Garbage Bin viewer and emptying, unused apps, Do not collect, post-scan summary, ads and subscription |
-| Devin Reece | Scan engine, storage permissions, duplicate, blurry, screenshot, empty and large video detection |
+| Devin Reece | Scan engine, storage permissions, duplicate, blurry, screenshot, empty and large video detection, duplicate grouping, storage-full notifications |
 | Hayden Coile | Architecture, Garbage Bin storage and compression, bulk deletion, backups, file recovery, storage results, swipe review |

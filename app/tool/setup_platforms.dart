@@ -13,13 +13,19 @@
 //   6. adds the AdMob app ids (DAT-38) to Android and iPhone,
 //   7. raises Android to API 24 and iPhone to iOS 13 if lower, which the
 //      ads and subscription plugins (DAT-38, DAT-39) need,
-//   8. names the app "DataMuncher" and installs its icon (tool/branding).
+//   8. names the app "DataMuncher" and installs its icon (tool/branding),
+//   9. storage-full notifications (DAT-36): the notification permission and
+//      icon, Java desugaring on Android, and the background check on iPhone,
+//  10. turns on permission_handler's photos permission in the Podfile, which
+//      the storage scan (DAT-1) uses on iPhone.
 
 import 'dart:io';
 
 const _manifestPath = 'android/app/src/main/AndroidManifest.xml';
 const _plistPath = 'ios/Runner/Info.plist';
 const _activityTemplate = 'tool/android/MainActivity.kt';
+const _androidResTemplates = 'tool/android/res';
+const _appDelegatePath = 'ios/Runner/AppDelegate.swift';
 
 const _permissions = {
   'android.permission.READ_EXTERNAL_STORAGE':
@@ -28,6 +34,16 @@ const _permissions = {
       '<uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />',
   'android.permission.READ_MEDIA_VIDEO':
       '<uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />',
+  // Garbage Bin (DAT-27/28) and storage scan (DAT-1): move files on
+  // Android 10 and older, and keep photo locations when restoring.
+  'android.permission.WRITE_EXTERNAL_STORAGE':
+      '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />',
+  'android.permission.ACCESS_MEDIA_LOCATION':
+      '<uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />',
+  // Storage-full notifications (DAT-36). Android 13+ asks the user; older
+  // versions allow it. WorkManager declares its own boot permission.
+  'android.permission.POST_NOTIFICATIONS':
+      '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />',
   // Unused apps (DAT-25): when each app was last opened.
   'android.permission.PACKAGE_USAGE_STATS':
       '<uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />',
@@ -60,6 +76,10 @@ const _gradleGroovy = 'android/app/build.gradle';
 const _podfile = 'ios/Podfile';
 const _minAndroidSdk = 24;
 
+/// Background storage check on iPhone (DAT-36). Must match
+/// StorageAlertService.taskId in lib/data/storage_alert/.
+const _storageCheckTaskId = 'com.example.datamuncher.storageCheck';
+
 const _plistEntries = {
   'NSPhotoLibraryUsageDescription':
       'DataMuncher scans your photos to find duplicates and blurry shots.',
@@ -86,6 +106,10 @@ Future<void> main() async {
   _raiseIosTarget();
   _setAppName();
   _installIcons();
+  _installAndroidResources();
+  _enableDesugaring();
+  _patchAppDelegate();
+  _patchPodfilePermissions();
 
   stdout.writeln('\nDone. Next:\n'
       '  flutter pub get\n'
@@ -214,15 +238,30 @@ void _patchInfoPlist() {
           '\t<string>${entry.value}</string>\n');
     }
   }
+  // DAT-36: let iOS run the background storage check.
+  if (!plist.contains('<key>BGTaskSchedulerPermittedIdentifiers</key>')) {
+    additions.write('\t<key>BGTaskSchedulerPermittedIdentifiers</key>\n'
+        '\t<array>\n\t\t<string>$_storageCheckTaskId</string>\n\t</array>\n');
+  }
+  final modes = RegExp(r'<key>UIBackgroundModes</key>\s*<array>').firstMatch(plist);
+  if (modes == null) {
+    additions.write('\t<key>UIBackgroundModes</key>\n'
+        '\t<array>\n\t\t<string>fetch</string>\n\t</array>\n');
+  } else if (!plist
+      .substring(modes.end, plist.indexOf('</array>', modes.end))
+      .contains('<string>fetch</string>')) {
+    plist = plist.replaceRange(modes.end, modes.end, '\n\t\t<string>fetch</string>');
+  }
   if (additions.isEmpty) {
-    _ok('iPhone photo messages already set');
+    if (plist != file.readAsStringSync()) file.writeAsStringSync(plist);
+    _ok('iPhone photo messages and background check already set');
     return;
   }
   final end = plist.lastIndexOf('</dict>');
   if (end < 0) _fail('Unexpected $_plistPath: no </dict>');
   plist = plist.replaceRange(end, end, additions.toString());
   file.writeAsStringSync(plist);
-  _ok('Added photo library messages and the AdMob id to $_plistPath');
+  _ok('Added photo library messages, the AdMob id and the background check to $_plistPath');
 }
 
 /// google_mobile_ads needs Android 7.0 (API 24) or newer.
@@ -357,6 +396,145 @@ File? _find(Directory root, String name) {
     if (entity is File && entity.uri.pathSegments.last == name) return entity;
   }
   return null;
+}
+
+/// Notification icon and the file that keeps it in release builds (DAT-36).
+void _installAndroidResources() {
+  final source = Directory(_androidResTemplates);
+  const target = 'android/app/src/main/res';
+  if (!source.existsSync() || !Directory(target).existsSync()) return;
+  var copied = 0;
+  for (final entity in source.listSync(recursive: true)) {
+    if (entity is! File) continue;
+    final relative = entity.path.substring(source.path.length + 1);
+    final out = File('$target/$relative');
+    final text = entity.readAsStringSync();
+    if (out.existsSync() && out.readAsStringSync() == text) continue;
+    out.parent.createSync(recursive: true);
+    out.writeAsStringSync(text);
+    copied++;
+  }
+  _ok(copied == 0
+      ? 'Notification icon already installed'
+      : 'Installed the notification icon');
+}
+
+const _desugarLib = 'com.android.tools:desugar_jdk_libs:2.1.4';
+
+/// flutter_local_notifications (DAT-36) needs Java 8+ time APIs on every
+/// Android version the app supports.
+void _enableDesugaring() {
+  final kts = File(_gradleKts);
+  final groovy = File(_gradleGroovy);
+  final file = kts.existsSync() ? kts : (groovy.existsSync() ? groovy : null);
+  if (file == null) return;
+  var text = file.readAsStringSync();
+  if (text.contains('coreLibraryDesugaring')) {
+    _ok('Android desugaring already on');
+    return;
+  }
+  final isKts = file.path.endsWith('.kts');
+  final options = RegExp(r'compileOptions\s*\{').firstMatch(text);
+  if (options == null) _fail('Unexpected ${file.path}: no compileOptions block');
+  text = text.replaceRange(
+      options.end,
+      options.end,
+      isKts
+          ? '\n        isCoreLibraryDesugaringEnabled = true'
+          : '\n        coreLibraryDesugaringEnabled true');
+  final dependency = isKts
+      ? 'coreLibraryDesugaring("$_desugarLib")'
+      : "coreLibraryDesugaring '$_desugarLib'";
+  final deps = RegExp(r'^dependencies\s*\{', multiLine: true).firstMatch(text);
+  if (deps != null) {
+    text = text.replaceRange(deps.end, deps.end, '\n    $dependency');
+  } else {
+    text = '${text.trimRight()}\n\ndependencies {\n    $dependency\n}\n';
+  }
+  file.writeAsStringSync(text);
+  _ok('Turned on Android desugaring in ${file.path}');
+}
+
+const _appDelegateMarker =
+    '// DataMuncher: storage-full notifications (DAT-36)';
+
+/// Shows notifications while the app is open and registers the background
+/// storage check (DAT-36). iOS only accepts background task handlers
+/// registered before launch finishes, so this can't be done from Dart.
+void _patchAppDelegate() {
+  final file = File(_appDelegatePath);
+  if (!file.existsSync()) {
+    _ok('No $_appDelegatePath (skipping iPhone notifications)');
+    return;
+  }
+  var text = file.readAsStringSync();
+  if (text.contains(_appDelegateMarker)) {
+    _ok('iPhone notifications already set up');
+    return;
+  }
+  final ret = RegExp(
+          r'^([ \t]*)return super\.application\(application, didFinishLaunchingWithOptions',
+          multiLine: true)
+      .firstMatch(text);
+  if (ret == null) {
+    _fail('Unexpected $_appDelegatePath: no didFinishLaunchingWithOptions');
+  }
+  final indent = ret[1]!;
+  final code = [
+    _appDelegateMarker,
+    'UNUserNotificationCenter.current().delegate = self as? UNUserNotificationCenterDelegate',
+    '// The background check runs in its own Flutter engine; give it the plugins.',
+    'WorkmanagerPlugin.setPluginRegistrantCallback { registry in',
+    '  GeneratedPluginRegistrant.register(with: registry)',
+    '}',
+    'WorkmanagerPlugin.registerPeriodicTask(',
+    '  withIdentifier: "$_storageCheckTaskId",',
+    '  earliestBeginInSeconds: 30 * 60)',
+    'WorkmanagerPlugin.registerLaunchHandlers()',
+    '',
+  ].map((l) => l.isEmpty ? '' : '$indent$l').join('\n');
+  text = text.replaceRange(ret.start, ret.start, '$code\n');
+  if (!text.contains('import UserNotifications')) {
+    text = text.replaceFirst('import UIKit', 'import UIKit\nimport UserNotifications');
+  }
+  if (!text.contains('import workmanager_apple')) {
+    text = text.replaceFirst(
+        'import UserNotifications', 'import UserNotifications\nimport workmanager_apple');
+  }
+  file.writeAsStringSync(text);
+  _ok('Set up iPhone notifications in $_appDelegatePath');
+}
+
+/// permission_handler only asks for photos on iPhone when this is set.
+void _patchPodfilePermissions() {
+  final file = File(_podfile);
+  if (!file.existsSync()) {
+    _ok('No $_podfile yet: run this script again after the first iPhone build');
+    return;
+  }
+  var text = file.readAsStringSync();
+  if (text.contains('PERMISSION_PHOTOS')) {
+    _ok('iPhone photos permission already on');
+    return;
+  }
+  const hook = 'flutter_additional_ios_build_settings(target)';
+  final at = text.indexOf(hook);
+  if (at < 0) {
+    _ok('No post_install hook in $_podfile; add PERMISSION_PHOTOS=1 by hand '
+        '(see packages/scan_engine_flutter/README.md)');
+    return;
+  }
+  final end = at + hook.length;
+  text = text.replaceRange(end, end, '''
+
+    target.build_configurations.each do |config|
+      config.build_settings['GCC_PREPROCESSOR_DEFINITIONS'] ||= [
+        '\$(inherited)',
+        'PERMISSION_PHOTOS=1',
+      ]
+    end''');
+  file.writeAsStringSync(text);
+  _ok('Turned on the iPhone photos permission in $_podfile');
 }
 
 void _ok(String message) => stdout.writeln('✓ $message');

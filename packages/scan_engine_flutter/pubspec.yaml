@@ -1,0 +1,27 @@
+name: scan_engine_flutter
+description: >-
+  Connects the DataMuncher scan engine to a real phone: Android (Pixel,
+  Samsung and every other Android device) and iPhone storage, photos, apps
+  and permissions.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.5.0
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  permission_handler: ">=11.3.0 <13.0.0"
+  scan_engine:
+    path: ../scan_engine
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.datamuncher.scan_engine_flutter
+        pluginClass: ScanEngineFlutterPlugin
+      ios:
+        pluginClass: ScanEngineFlutterPlugin

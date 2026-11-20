@@ -1,3 +1,5 @@
+import 'dart:io' show File;
+
 import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:photo_manager_image_provider/photo_manager_image_provider.dart';
@@ -171,12 +173,15 @@ class _BinPageState extends State<BinPage> {
       return await widget.state.deleteFromBin(ids, allowPermanent: alreadyWarned);
     } on NoSystemTrashException {
       if (!mounted) return null;
+      final these = ids.length == 1 ? 'this file' : 'these files';
+      final why = ids.any(widget.state.fileBin.contains)
+          ? 'Files moved here by the storage scan are deleted for good, so $these'
+          : "This phone doesn't keep deleted photos and videos in a trash, so $these";
       final ok = await showDialog<bool>(
         context: context,
         builder: (c) => AlertDialog(
           title: const Text('Delete permanently?'),
-          content: Text("This phone doesn't keep deleted photos and videos in a trash, so "
-              "${ids.length == 1 ? 'this file' : 'these files'} can't be recovered afterwards."),
+          content: Text("$why can't be recovered afterwards."),
           actions: [
             TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
             TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Delete permanently')),
@@ -198,11 +203,11 @@ class _BinPageState extends State<BinPage> {
 
   /// Garbage Bin Empty (DAT-28).
   Future<EmptyBinOutcome> _empty() async {
-    // When the phone is known to have no trash, the confirmation already
+    // When something will be deleted for good, the confirmation already
     // said so (see [_emptyBinNote]), so don't ask a second time.
     final result = await _deleteWithBackupCheck(
-      widget.state.bin.toList(),
-      alreadyWarned: _hasTrash == false,
+      widget.state.binIds,
+      alreadyWarned: _hasTrash == false || !widget.state.fileBin.isEmpty,
     );
     if (result == null) return EmptyBinOutcome.nothingRemoved;
     return EmptyBinOutcome(
@@ -211,14 +216,33 @@ class _BinPageState extends State<BinPage> {
     );
   }
 
-  String? get _emptyBinNote => switch (_hasTrash) {
-        true => "They'll go to your phone's trash, where you can restore them for "
-            '${systemTrashRetention.inDays} days.',
-        false => "This phone has no trash for photos and videos, so they can't be recovered afterwards.",
-        null => null,
-      };
+  String? get _emptyBinNote {
+    if (!widget.state.fileBin.isEmpty) {
+      return widget.state.bin.isEmpty || _hasTrash != true
+          ? "They'll be deleted for good and can't be recovered afterwards."
+          : "Photos and videos will go to your phone's trash for ${systemTrashRetention.inDays} days. "
+              "Files moved here by the storage scan will be deleted for good.";
+    }
+    return switch (_hasTrash) {
+      true => "They'll go to your phone's trash, where you can restore them for "
+          '${systemTrashRetention.inDays} days.',
+      false => "This phone has no trash for photos and videos, so they can't be recovered afterwards.",
+      null => null,
+    };
+  }
 
   Widget? _thumbnail(BinEntry entry) {
+    final stored = _store.storedPathFor(entry.id);
+    if (stored != null) {
+      if (entry.category != FileCategory.photo) return null;
+      return Image.file(
+        File(stored),
+        fit: BoxFit.cover,
+        cacheWidth: 200,
+        // Damaged photos (the scan's "unreadable" finds) fall back to an icon.
+        errorBuilder: (_, _, _) => const Icon(Icons.broken_image_outlined),
+      );
+    }
     final asset = _store.assetFor(entry.id);
     if (asset == null) return null;
     return Image(
@@ -227,14 +251,18 @@ class _BinPageState extends State<BinPage> {
     );
   }
 
+  // Rebuilt on state changes so the Empty Bin note matches what's in the bin.
   @override
-  Widget build(BuildContext context) => GarbageBinScreen(
-        store: _store,
-        onRecover: _recover,
-        onDelete: _delete,
-        onEmptyBin: _empty,
-        emptyBinNote: _emptyBinNote,
-        thumbnailBuilder: _thumbnail,
+  Widget build(BuildContext context) => ListenableBuilder(
+        listenable: widget.state,
+        builder: (_, _) => GarbageBinScreen(
+          store: _store,
+          onRecover: _recover,
+          onDelete: _delete,
+          onEmptyBin: _empty,
+          emptyBinNote: _emptyBinNote,
+          thumbnailBuilder: _thumbnail,
+        ),
       );
 }
 

@@ -1,6 +1,7 @@
 package __PACKAGE__
 
-// DataMuncher Android code for unused app detection (DAT-25).
+// DataMuncher Android code for unused app detection (DAT-25) and for
+// keeping the gallery up to date when the Garbage Bin moves files.
 // Installed by `dart run tool/setup_platforms.dart`, which fills in the
 // package line above. Edit the copy in tool/android/, not the generated one.
 
@@ -14,6 +15,7 @@ import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -63,6 +65,19 @@ class MainActivity : FlutterActivity() {
                         } else {
                             startUninstall(pkg, result)
                         }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        // After the Garbage Bin moves files, re-index their old and new paths
+        // so the gallery (and photo_manager) stop showing stale entries.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "datamuncher/media")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "scanFiles" -> {
+                        val paths = call.argument<List<String>>("paths").orEmpty()
+                        MediaScannerConnection.scanFile(applicationContext, paths.toTypedArray(), null, null)
+                        result.success(null)
                     }
                     else -> result.notImplemented()
                 }

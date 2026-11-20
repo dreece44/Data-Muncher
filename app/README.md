@@ -1,6 +1,29 @@
-# DataMuncher app — Garbage Bin (DAT-27, 28), Unused apps (DAT-25), Do not collect (DAT-32), Free with ads (DAT-38), Ad-free subscription (DAT-39)
+# DataMuncher app
 
-Built on the photo-library draft app (`core.dart`, `pages.dart`, `rules.dart`, `main.dart`), which is included here because it isn't on GitHub yet. Sprint 2 added the Garbage Bin; Sprint 3 unused app detection and the Do-not-collect list; Sprint 4 the free-with-ads plan and the optional ad-free subscription.
+The whole team's work in one Flutter app. Earlier sprints built the photo-library app, the Garbage Bin (DAT-27, 28), unused apps (DAT-25), Do not collect (DAT-32) and the two plans (DAT-38, 39); the storage scan (DAT-1, `../packages/`), Hayden's Garbage Bin storage and Storage Results pages, the folder scan (DAT-16, 18), duplicate groups (DAT-34) and storage-full notifications (DAT-36) were brought in from the integration branch.
+
+## Who built what
+
+| Where in the app | What | Code | By |
+|---|---|---|---|
+| Home: Duplicates / Empty / Blurry, Munch my data | Photo library scan | `lib/core.dart`, `lib/rules.dart` | Nathan Kim |
+| Home: bin icon | Garbage Bin viewer and Empty Bin (DAT-27/28) | `lib/*/garbage_bin/` | Nathan Kim |
+| Home: Scan storage | Storage scan (DAT-1) using `packages/scan_engine` | `lib/*/storage_scan/` | Devin Reece |
+| Scan storage → Summary | Storage Scan Results with the wasted space notice | `lib/presentation/storage_results/` | Hayden Coile |
+| Scan storage → By category | Garbage Collection: send categories to the bin | `lib/presentation/garbage_collection/` | Hayden Coile |
+| Home: Garbage storage | Compressed temporary storage (DAT-17) | `lib/presentation/garbage_storage/` | Hayden Coile |
+| Home: Scan a folder | Classifier (DAT-16) and one-tap munch (DAT-18) | `lib/models.dart`, `lib/classifier.dart`, `lib/muncher.dart`, `lib/presentation/folder_munch/` | Nathan Kim |
+| Notification + home banner | Storage-full warning (DAT-36) | `lib/*/storage_alert/` | Devin Reece |
+| Duplicates → groups | Duplicate grouping with the best copy picked (DAT-34) | `lib/*/duplicate_groups/` | Devin Reece |
+
+`lib/application/storage_scan/team_views.dart` and `lib/presentation/team_pages.dart` connect the storage scan to Hayden's and Nathan's pages. Each of those pages can also run on its own:
+
+```
+flutter run -t lib/presentation/storage_results/storage_results.dart
+flutter run -t lib/presentation/garbage_storage/main.dart
+flutter run -t lib/presentation/garbage_collection/main.dart
+flutter run -t lib/presentation/folder_munch/main.dart
+```
 
 ## Setting this up
 
@@ -22,6 +45,8 @@ flutter run
 - adds the AdMob app ids (Google's test ids) to Android and iPhone, and raises Android to API 24 / iPhone to iOS 13 if lower (needed by the ads and subscription plugins).
 
 - names the app "DataMuncher" and installs its icon (`tool/branding/`).
+- storage-full notifications (DAT-36): notification permission and icon, Java desugaring on Android, the background check in `Info.plist` and `AppDelegate.swift` on iPhone;
+- turns on permission_handler's photos permission in the `Podfile` for the storage scan. Flutter only creates the `Podfile` on the first iPhone build, so **run the script again after that build**.
 
 **Billing mode.** Debug builds (`flutter run`) use **test mode**: subscribing is simulated and no money is charged, so the simulator and demos just work. Release builds always use the real App Store / Google Play. Override with `--dart-define=BILLING=store` (e.g. to try Apple's sandbox) or `--dart-define=BILLING=test`.
 
@@ -46,7 +71,10 @@ flutter run
 | | `lib/data/monetization/` — App Store / Google Play billing, test mode, saved plan |
 | | `lib/data/ads/` — AdMob banners (`AdProvider`) |
 | | `lib/presentation/monetization/` — Plans screen, banner slot |
-| Android | `tool/android/MainActivity.kt` — usage history, installed apps, sizes, icons, uninstall dialog |
+| Android | `tool/android/MainActivity.kt` — usage history, installed apps, sizes, icons, uninstall dialog, re-indexing files the Garbage Bin moved |
+| Storage scan | `lib/*/storage_scan/` — scans all of shared storage with `../packages/scan_engine_flutter` (DAT-1); `lib/data/garbage_bin/file_bin.dart` keeps the files it moves to the bin |
+| Duplicate groups | `lib/*/duplicate_groups/` — groups copies and picks the best one to keep (DAT-34) |
+| Storage alerts | `lib/*/storage_alert/` — levels, notification and background check, home-page banner (DAT-36) |
 | App wiring | `lib/main.dart` (home buttons), `lib/pages.dart` (`BinPage`, `ReviewPage`, `DoNotCollectPage`), `lib/core.dart` (`MunchState`) |
 
 ## DAT-27 — Garbage Bin Viewer: acceptance criteria
@@ -145,3 +173,53 @@ Same detection rules as `UnusedAppDetector` in Devin's scan engine (DAT-1); `Ins
 - The demo photos were run through the app's real scan rules (`rules.dart`): 2 duplicates, 1 blurry, 1 black screen, 3 kept.
 - `tool/setup_platforms.dart` was run twice on a project built from Flutter 3.47.9's own `flutter create` templates.
 - Not run here: the widget (screen) tests and the app on a device, which need Flutter's engine. Run `flutter test` and try it on the simulator.
+
+## Storage-full notifications (DAT-36)
+
+The app warns before the phone fills up:
+
+- **Low**: less than 10% of the phone, or 5 GB, free (whichever is smaller).
+- **Almost full**: less than 5%, or 1 GB, free.
+
+The warning appears as a phone notification and as a banner on the home page.
+The banner also covers users who turned notifications off. A warning is
+repeated at most once a day at the same level. It is sent again right away if
+storage gets worse, and cleared once space is freed. Tapping it opens Scan
+storage.
+
+| | Android 7–12 | Android 13+ | iOS 15+ (iPhone, iPad) |
+|---|---|---|---|
+| Permission | Allowed by default | Asked on first launch | Asked on first launch |
+| Background check | Every hour (WorkManager), survives reboot | Same | iOS decides when (Background App Refresh) |
+| Also checked | App open, app back in front, after munching or emptying the bin | Same | Same |
+
+To try it on the emulator, fill it up below the threshold and reopen the app.
+The fill file is just zeros. Delete it afterwards:
+
+```
+adb shell fallocate -l 6G /sdcard/Download/fill.bin
+adb shell rm /sdcard/Download/fill.bin
+```
+
+To run the background check now instead of waiting an hour, find the app's
+WorkManager job id with `adb shell dumpsys jobscheduler` (look for
+`com.example.datamuncher`), then run `adb shell cmd jobscheduler run -f com.example.datamuncher <id>`.
+
+On iOS, Background App Refresh must be on (Settings → General). In Xcode you
+can trigger the check from the debugger with
+`e -l objc -- (void)[[BGTaskScheduler sharedScheduler] _simulateLaunchForTaskWithIdentifier:@"com.example.datamuncher.storageCheck"]`.
+
+
+
+## On-device test of the team pages
+
+Needs file access and the sample phone pushed. The test uninstalls the app when it finishes, so install it and grant access before each run:
+
+```
+adb push ../packages/scan_engine/sample_phone /sdcard/TeamTest
+flutter build apk --debug
+adb install -r build/app/outputs/flutter-apk/app-debug.apk
+adb shell appops set com.example.datamuncher MANAGE_EXTERNAL_STORAGE allow
+adb shell pm grant com.example.datamuncher android.permission.READ_MEDIA_IMAGES
+flutter test integration_test -d emulator-5554
+```
