@@ -350,7 +350,7 @@ void main() {
 
     expect(emptied, 1);
     expect(
-      find.text("Emptied the bin: 3 files (905 MB). You can restore them from "
+      find.text("Emptied the bin: 3 files (884 MB). You can restore them from "
           "your phone's trash for 30 days; the space is freed after that."),
       findsOneWidget,
     );
@@ -372,7 +372,7 @@ void main() {
     await tester.pumpAndSettle();
     await confirmEmpty(tester);
 
-    expect(find.text('Emptied the bin and freed 905 MB.'), findsOneWidget);
+    expect(find.text('Emptied the bin and freed 884 MB.'), findsOneWidget);
     await dismissSnackBar(tester);
   });
 
@@ -391,7 +391,7 @@ void main() {
     await confirmEmpty(tester);
 
     expect(
-      find.text('Removed 1 file (900 MB) from the bin. 2 files are still in '
+      find.text('Removed 1 file (880 MB) from the bin. 2 files are still in '
           "the bin. You can restore it from your phone's trash for 30 days; "
           'the space is freed after that.'),
       findsOneWidget,

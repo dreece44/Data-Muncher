@@ -1,10 +1,13 @@
 import 'package:datamuncher/application/storage_scan/storage_scan.dart';
 import 'package:datamuncher/application/storage_scan/team_views.dart';
 import 'package:datamuncher/data/garbage_bin/bin_entry.dart';
+import 'package:datamuncher/data/garbage_bin/file_bin.dart';
+import 'package:datamuncher/models.dart' as dat16;
 import 'package:datamuncher/presentation/folder_munch/main.dart' show MunchHome;
 import 'package:datamuncher/presentation/garbage_collection/garbage_collection.dart';
 import 'package:datamuncher/presentation/garbage_storage/garbage_collection_storage.dart';
 import 'package:datamuncher/presentation/storage_results/storage_results.dart';
+import 'package:datamuncher/presentation/team_pages.dart' show candidatesFromFolderScan;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
@@ -97,7 +100,10 @@ void main() {
       List<StorageItem>? sent;
       await tester.pumpWidget(app(GarbageCollectionPage(
         items: rows.keys.toList(),
-        onSend: (chosen) async => sent = chosen,
+        onSend: (chosen) async {
+          sent = chosen;
+          return null;
+        },
       )));
       expect(find.text('4 MB'), findsOneWidget);
       await tester.tap(find.text('Empty file (1)'));
@@ -111,6 +117,20 @@ void main() {
       expect(find.text('Empty file (1)'), findsOneWidget);
       expect(find.text('Selected items sent to the garbage bin.'), findsOneWidget);
     });
+  });
+
+  testWidgets('GarbageCollectionPage shows the app message when some files failed', (tester) async {
+    final rows = collectionGroupsFrom(candidates);
+    await tester.pumpWidget(app(GarbageCollectionPage(
+      items: rows.keys.toList(),
+      onSend: (chosen) async => "1 couldn't be moved.",
+    )));
+    await tester.tap(find.text('Send selected items to garbage bin'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Continue?'));
+    await tester.pumpAndSettle();
+    expect(find.text("1 couldn't be moved."), findsOneWidget);
+    expect(find.text('Selected items sent to the garbage bin.'), findsNothing);
   });
 
   testWidgets('StorageResultsPage shows real results and the wasted space notice', (tester) async {
@@ -128,6 +148,36 @@ void main() {
     expect(find.text('Duplicate'), findsOneWidget);
     expect(find.text('120'), findsOneWidget);
     expect(find.text('128 GB'), findsNothing, reason: 'sample data is replaced');
+  });
+
+  testWidgets('StorageResultsPage says so when nothing is wasted', (tester) async {
+    tester.view.physicalSize = const Size(900, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final results = scanResultsFrom(report(), const [], const []);
+    await tester.pumpWidget(app(StorageResultsPage(scanResults: results)));
+    expect(find.text('Wasted Digital Space Detected'), findsNothing);
+    expect(find.text('No wasted space found'), findsOneWidget);
+    expect(find.text('Nothing to reclaim.'), findsOneWidget);
+  });
+
+  testWidgets('StorageResultsPage buttons call the app, and are off without it', (tester) async {
+    tester.view.physicalSize = const Size(900, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    var details = 0, exports = 0;
+    await tester.pumpWidget(app(StorageResultsPage(
+      scanResults: scanResultsFrom(report(), candidates, const []),
+      onViewDetails: () => details++,
+      onExport: () => exports++,
+    )));
+    await tester.tap(find.text('View Details'));
+    await tester.tap(find.text('Export Results'));
+    expect((details, exports), (1, 1));
+
+    await tester.pumpWidget(app(const StorageResultsPage()));
+    final buttons = tester.widgetList<ButtonStyleButton>(find.byWidgetPredicate((w) => w is ButtonStyleButton));
+    expect(buttons.every((b) => b.onPressed == null), isTrue, reason: 'the standalone preview has nothing to open');
   });
 
   testWidgets('StorageResultsPage still shows its sample without results', (tester) async {
@@ -153,9 +203,121 @@ void main() {
     expect(find.text('Storage Used'), findsOneWidget);
   });
 
+  group('GarbageStoragePage with the bin (DAT-17)', () {
+    FileBinRecord rec(String id, int size, {int? stored}) => FileBinRecord(
+          id: id,
+          originalPath: '/sdcard/Download/$id.txt',
+          storedPath: '/sdcard/.DataMuncherBin/$id.txt',
+          sizeBytes: size,
+          storedSizeBytes: stored ?? size,
+          compressed: stored != null,
+          reason: CollectionReason.other,
+          collectedAt: DateTime(2026, 11, 1),
+        );
+
+    Future<_FakeStorage> pump(WidgetTester tester) async {
+      tester.view.physicalSize = const Size(900, 3000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final storage = _FakeStorage([rec('log', 10240, stored: 2048), rec('notes', 512)]);
+      await tester.pumpWidget(app(GarbageStoragePage(source: storage)));
+      return storage;
+    }
+
+    testWidgets('shows what the bin really stores', (tester) async {
+      await pump(tester);
+      expect(find.text('2.5 KB'), findsWidgets, reason: 'storage used: 2048 + 512 bytes');
+      expect(find.text('8.0 KB'), findsOneWidget, reason: 'space saved by compression');
+      expect(find.text('2'), findsOneWidget);
+      expect(find.text('1 of 2 file(s) compressed'), findsOneWidget);
+      expect(find.text('Collect Files'), findsNothing, reason: "the picker can't remove originals");
+    });
+
+    testWidgets('Optimize compresses the file in the bin', (tester) async {
+      final storage = await pump(tester);
+      await tester.tap(find.byTooltip('Optimize File').last);
+      await tester.pumpAndSettle();
+      expect(storage.compressed, ['notes']);
+      expect(find.text('Optimized notes.txt: saved 412 B.'), findsOneWidget);
+      expect(find.text('2 of 2 file(s) compressed'), findsOneWidget);
+    });
+
+    testWidgets('Remove asks first and deletes for good', (tester) async {
+      final storage = await pump(tester);
+      await tester.tap(find.byTooltip('Remove File').first);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('deleted for good'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(storage.deleted, isEmpty);
+
+      await tester.tap(find.byTooltip('Remove File').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+      expect(storage.deleted, ['log']);
+      expect(find.text('1 file(s) deleted successfully.'), findsOneWidget);
+      expect(find.text('log.txt'), findsNothing);
+    });
+  });
+
   testWidgets('MunchHome opens before any scan', (tester) async {
     await tester.pumpWidget(app(const MunchHome()));
     expect(find.text('MUNCH MY DATA'), findsOneWidget);
-    expect(find.text('BLURRY (not built yet)'), findsOneWidget);
+    for (final label in ['DUPLICATES', 'EMPTY', 'UNREADABLE', 'BLURRY']) {
+      expect(find.text(label), findsOneWidget);
+    }
+    expect(find.textContaining('not built yet'), findsNothing);
+    expect(find.textContaining('GARBAGE BIN'), findsNothing, reason: 'nothing to move before a scan');
   });
+
+  test('folder-scan findings go to the bin with matching reasons', () {
+    final file = dat16.FileRecord(path: '/sdcard/Download/a.pdf', sizeBytes: 42);
+    final c = candidatesFromFolderScan([
+      dat16.ClassificationResult(file, dat16.WasteCategory.unreadable, 'File could not be opened.'),
+      dat16.ClassificationResult(file, dat16.WasteCategory.blurry, 'Sharpness 3.0 is below 60.'),
+    ]);
+    expect(c.map((x) => x.reason), [CollectionReason.unreadable, CollectionReason.blurry]);
+    expect(c.first.path, '/sdcard/Download/a.pdf');
+    expect(c.first.item.displayName, 'a.pdf');
+    expect(c.first.item.sizeBytes, 42);
+  });
+}
+
+/// In-memory stand-in for the bin's file storage.
+class _FakeStorage extends ChangeNotifier implements GarbageStorageSource {
+  _FakeStorage(this.files);
+
+  @override
+  final List<FileBinRecord> files;
+  final compressed = <String>[];
+  final deleted = <String>[];
+
+  @override
+  Future<FileBinRecord?> compress(String id) async {
+    final i = files.indexWhere((f) => f.id == id);
+    final f = files[i];
+    final packed = FileBinRecord(
+      id: f.id,
+      originalPath: f.originalPath,
+      storedPath: '${f.storedPath}$compressedSuffix',
+      sizeBytes: f.sizeBytes,
+      storedSizeBytes: 100,
+      compressed: true,
+      reason: f.reason,
+      collectedAt: f.collectedAt,
+    );
+    files[i] = packed;
+    compressed.add(id);
+    notifyListeners();
+    return packed;
+  }
+
+  @override
+  Future<Set<String>> deleteForGood(List<String> ids) async {
+    files.removeWhere((f) => ids.contains(f.id));
+    deleted.addAll(ids);
+    notifyListeners();
+    return ids.toSet();
+  }
 }

@@ -1,9 +1,6 @@
-
-import 'dart:typed_data';
-
-import 'package:archive/archive.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+
+import '../../data/garbage_bin/file_bin.dart';
 
 void main() {
   runApp(const GarbageStorageApp());
@@ -26,289 +23,147 @@ class GarbageStorageApp extends StatelessWidget {
   }
 }
 
-class GarbageFile {
-  final String id;
-  final String name;
-  final int originalSize;
-  final List<int> storedBytes;
-  final bool compressed;
+/// The Garbage Bin's file storage, as this page sees it (DAT-17). Files that
+/// Scan storage and Scan a folder move to the bin are kept here, gzipped when
+/// that saves space.
+abstract class GarbageStorageSource implements Listenable {
+  /// Files in the bin's storage.
+  List<FileBinRecord> get files;
 
-  GarbageFile({
-    required this.id,
-    required this.name,
-    required this.originalSize,
-    required this.storedBytes,
-    required this.compressed,
-  });
+  /// Compresses one file; null when that wouldn't make it smaller.
+  Future<FileBinRecord?> compress(String id);
 
-  int get storedSize => storedBytes.length;
-  int get spaceSaved => originalSize - storedSize;
+  /// Deletes files for good; returns the ids that were deleted.
+  Future<Set<String>> deleteForGood(List<String> ids);
 }
 
 class GarbageStoragePage extends StatefulWidget {
-  const GarbageStoragePage({super.key});
+  const GarbageStoragePage({super.key, this.source});
+
+  /// The bin's storage. Null (the page running on its own) shows it empty.
+  final GarbageStorageSource? source;
 
   @override
   State<GarbageStoragePage> createState() => _GarbageStoragePageState();
 }
 
 class _GarbageStoragePageState extends State<GarbageStoragePage> {
-  
-void _optimizeFile(GarbageFile file) {
-  try {
-    // Recover original contents if the file is GZIP-compressed.
-    final List<int> originalBytes = file.compressed
-        ? GZipDecoder().decodeBytes(file.storedBytes)
-        : file.storedBytes;
-
-    // Attempt lossless compression for any file type.
-    final List<int> compressedBytes =
-        GZipEncoder().encode(originalBytes);
-
-    final bool useCompression =
-        compressedBytes.length < originalBytes.length;
-
-    // Keep compressed data only when it is smaller.
-    final List<int> optimizedBytes = useCompression
-        ? compressedBytes
-        : originalBytes;
-
-    setState(() {
-      final index =
-          _files.indexWhere((item) => item.id == file.id);
-
-      if (index != -1) {
-        _files[index] = GarbageFile(
-          id: file.id,
-          name: file.name,
-          originalSize: file.originalSize,
-          storedBytes: List<int>.from(optimizedBytes),
-          compressed: useCompression,
-        );
-      }
-    });
-
-    final int saved =
-        originalBytes.length - optimizedBytes.length;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          saved > 0
-              ? 'Optimized ${file.name}: saved ${_formatSize(saved)}.'
-              : '${file.name} cannot be reduced further with lossless compression.',
-        ),
-      ),
-    ); 
-  } catch (error) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Could not optimize ${file.name}: $error',
-        ),
-      ),
-    );
-  }
-}
-
-  // Proposed project decision: maximum of 100 MiB in temporary storage.
-  static const int storageLimit = 100 * 1024 * 1024;
-
-  final List<GarbageFile> _files = [];
-  bool _isAddingFile = false;
   //track files selected for bulk deletion
   final Set<String> _selectedFileIds = {};
+  bool _busy = false;
 
-  int get _usedStorage =>
-      _files.fold(0, (total, file) => total + file.storedSize);
+  List<FileBinRecord> get _files => widget.source?.files ?? const [];
 
-  int get _originalStorage =>
-      _files.fold(0, (total, file) => total + file.originalSize);
+  int get _usedStorage => _files.fold(0, (total, file) => total + file.storedSizeBytes);
 
-  int get _spaceSaved =>
-      _files.fold(0, (total, file) => total + file.spaceSaved);
+  int get _originalStorage => _files.fold(0, (total, file) => total + file.sizeBytes);
 
-  double get _storagePercentage =>
-      _usedStorage / storageLimit;
+  int get _spaceSaved => _files.fold(0, (total, file) => total + file.bytesSaved);
 
   String _formatSize(int bytes) {
     if (bytes < 1024) return '$bytes B';
     if (bytes < 1024 * 1024) {
       return '${(bytes / 1024).toStringAsFixed(1)} KB';
     }
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
   }
 
-  Future<void> _addFiles() async {
-    if (_isAddingFile) return;
+  void _say(String message) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
 
-    setState(() => _isAddingFile = true);
-
+  Future<void> _run(Future<void> Function() action) async {
+    if (_busy) return;
+    setState(() => _busy = true);
     try {
-      final result = await FilePicker.platform.pickFiles(
-        allowMultiple: true,
-        withData: true,
-      );
-
-      if (!mounted || result == null) return;
-
-      int added = 0;
-      int rejected = 0;
-      int unavailable = 0;
-
-      for (final file in result.files) {
-        final Uint8List? bytes = file.bytes;
-
-        if (bytes == null) {
-          unavailable++;
-          continue;
-        }
-
-        // Compress in memory, then keep the smaller representation.
-        List<int> storedBytes = bytes;
-        bool compressed = false;
-
-        try {
-          final compressedBytes = GZipEncoder().encode(bytes);
-
-          if (compressedBytes.length < bytes.length) {
-            storedBytes = compressedBytes;
-            compressed = true;
-          }
-        } catch (_) {
-          // If compression fails, retain the original file bytes.
-        }
-
-        // Check the cap against actual stored size.
-        if (_usedStorage + storedBytes.length > storageLimit) {
-          rejected++;
-          continue;
-        }
-
-        setState(() {
-          _files.add(
-            GarbageFile(
-              id: '${DateTime.now().microsecondsSinceEpoch}_$added',
-              name: file.name,
-              originalSize: bytes.length,
-              storedBytes: List<int>.from(storedBytes),
-              compressed: compressed,
-            ),
-          );
-        });
-
-        added++;
-      }
-
-      if (!mounted) return;
-
-      final messages = <String>[
-        if (added > 0) '$added file(s) added.',
-        if (rejected > 0)
-          '$rejected file(s) rejected: the 100 MiB storage limit would be exceeded.',
-        if (unavailable > 0)
-          '$unavailable file(s) could not be read by the browser.',
-      ];
-
-      if (messages.isNotEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(messages.join(' '))),
-        );
-      }
+      await action();
     } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not collect files: $error')),
-        );
-      }
+      if (mounted) _say('Something went wrong: $error');
     } finally {
-      if (mounted) {
-        setState(() => _isAddingFile = false);
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// Gzips one file in the bin; keeps it only if it got smaller.
+  Future<void> _optimizeFile(FileBinRecord file) => _run(() async {
+        final updated = await widget.source!.compress(file.id);
+        if (!mounted) return;
+        _say(updated == null
+            ? '${file.fileName} cannot be reduced further with lossless compression.'
+            : 'Optimized ${file.fileName}: saved ${_formatSize(updated.bytesSaved)}.');
+      });
+
+  Future<void> _optimizeAll() => _run(() async {
+        var saved = 0;
+        var count = 0;
+        for (final file in _files.where((f) => !f.compressed).toList()) {
+          final updated = await widget.source!.compress(file.id);
+          if (updated != null) {
+            saved += updated.bytesSaved;
+            count++;
+          }
+        }
+        if (!mounted) return;
+        _say(count == 0
+            ? 'Nothing more can be compressed.'
+            : 'Compressed $count file(s), saving ${_formatSize(saved)}.');
+      });
+
+  void _toggleFileSelection(FileBinRecord file, bool selected) {
+    setState(() {
+      if (selected) {
+        _selectedFileIds.add(file.id);
+      } else {
+        _selectedFileIds.remove(file.id);
       }
-    }
-  }
-  
-void _toggleFileSelection(GarbageFile file, bool selected) {
-  setState(() {
-    if (selected) {
-      _selectedFileIds.add(file.id);
-    } else {
-      _selectedFileIds.remove(file.id);
-    }
-  });
-}
-
-void _selectAllFiles() {
-  setState(() {
-    if (_selectedFileIds.length == _files.length) {
-      _selectedFileIds.clear();
-    } else {
-      _selectedFileIds.addAll(_files.map((file) => file.id));
-    }
-  });
-}
-
-Future<void> _deleteSelectedFiles() async {
-  if (_selectedFileIds.isEmpty) return;
-
-  final confirmed = await showDialog<bool>(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: const Text('Delete Selected Files?'),
-      content: Text(
-        'Are you sure you want to delete '
-        '${_selectedFileIds.length} selected file(s)?',
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context, false),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(context, true),
-          child: const Text('Delete'),
-        ),
-      ],
-    ),
-  );
-
-  if (confirmed == true && mounted) {
-    final deletedCount = _selectedFileIds.length;
-
-    setState(() {
-      _files.removeWhere(
-        (file) => _selectedFileIds.contains(file.id),
-      );
-
-      _selectedFileIds.clear();
     });
+  }
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$deletedCount file(s) deleted successfully.'),
+  void _selectAllFiles() {
+    setState(() {
+      if (_selectedFileIds.length == _files.length) {
+        _selectedFileIds.clear();
+      } else {
+        _selectedFileIds.addAll(_files.map((file) => file.id));
+      }
+    });
+  }
+
+  /// Deletes [ids] for good after asking.
+  Future<void> _delete(List<String> ids, {required String title}) async {
+    if (ids.isEmpty) return;
+    final bytes = _files.where((f) => ids.contains(f.id)).fold<int>(0, (t, f) => t + f.storedSizeBytes);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(
+          '${ids.length} file(s) (${_formatSize(bytes)}) will be deleted for good. '
+          "They can't be recovered afterwards.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
       ),
     );
-  }
-}
-
-
-  void _removeFile(GarbageFile file) {
-    setState(() {
-      _files.removeWhere((item) => item.id == file.id);
-      _selectedFileIds.remove(file.id);
+    if (confirmed != true || !mounted) return;
+    await _run(() async {
+      final deleted = await widget.source!.deleteForGood(ids);
+      if (!mounted) return;
+      setState(() => _selectedFileIds.removeAll(deleted));
+      final kept = ids.length - deleted.length;
+      _say('${deleted.length} file(s) deleted successfully.'
+          '${kept == 0 ? '' : " $kept couldn't be deleted."}');
     });
-  }
-
-
-  void _clearStorage() {
-    setState(() {
-      _files.clear();
-      _selectedFileIds.clear();
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Garbage storage cleared.')),
-    );
   }
 
   Widget _statCard(
@@ -342,7 +197,16 @@ Future<void> _deleteSelectedFiles() async {
 
   @override
   Widget build(BuildContext context) {
-    final remaining = storageLimit - _usedStorage;
+    final source = widget.source;
+    return source == null ? _page() : ListenableBuilder(listenable: source, builder: (_, __) => _page());
+  }
+
+  Widget _page() {
+    final files = _files;
+    _selectedFileIds.retainAll(files.map((f) => f.id));
+    final original = _originalStorage;
+    final storedShare = original == 0 ? 0.0 : _usedStorage / original;
+    final canAct = widget.source != null && files.isNotEmpty && !_busy;
 
     return Scaffold(
       appBar: AppBar(
@@ -364,8 +228,8 @@ Future<void> _deleteSelectedFiles() async {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Collect unwanted files, compress them when possible, '
-                'and manage the space they occupy.',
+                'Files sent to the Garbage Bin by Scan storage and Scan a folder are kept here, '
+                'compressed when that saves space, until you recover or delete them.',
               ),
               const SizedBox(height: 20),
 
@@ -393,7 +257,7 @@ Future<void> _deleteSelectedFiles() async {
                       ),
                       _statCard(
                         'Files Collected',
-                        '${_files.length}',
+                        '${files.length}',
                         Icons.delete_outline,
                         Colors.orange,
                       ),
@@ -411,7 +275,7 @@ Future<void> _deleteSelectedFiles() async {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        'Storage Capacity',
+                        'Compression',
                         style: TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
@@ -419,17 +283,17 @@ Future<void> _deleteSelectedFiles() async {
                       ),
                       const SizedBox(height: 12),
                       LinearProgressIndicator(
-                        value: _storagePercentage.clamp(0.0, 1.0),
+                        value: storedShare.clamp(0.0, 1.0),
                         minHeight: 12,
                         backgroundColor: Colors.grey.shade200,
                       ),
                       const SizedBox(height: 10),
                       Text(
-                        '${_formatSize(_usedStorage)} used of '
-                        '${_formatSize(storageLimit)}',
+                        '${_formatSize(_usedStorage)} stored for '
+                        '${_formatSize(original)} of files',
                       ),
                       Text(
-                        '${_formatSize(remaining)} remaining',
+                        '${files.where((f) => f.compressed).length} of ${files.length} file(s) compressed',
                         style: const TextStyle(color: Colors.grey),
                       ),
                     ],
@@ -444,8 +308,8 @@ Future<void> _deleteSelectedFiles() async {
                 runSpacing: 12,
                 children: [
                   FilledButton.icon(
-                    onPressed: _isAddingFile ? null : _addFiles,
-                    icon: _isAddingFile
+                    onPressed: canAct && files.any((f) => !f.compressed) ? _optimizeAll : null,
+                    icon: _busy
                         ? const SizedBox(
                             width: 18,
                             height: 18,
@@ -453,39 +317,35 @@ Future<void> _deleteSelectedFiles() async {
                               strokeWidth: 2,
                             ),
                           )
-                        : const Icon(Icons.add),
-                    label: Text(
-                      _isAddingFile ? 'Collecting...' : 'Collect Files',
-                    ),
+                        : const Icon(Icons.compress),
+                    label: const Text('Optimize All'),
                   ),
                   OutlinedButton.icon(
-                    onPressed: _files.isEmpty ? null : _clearStorage,
+                    onPressed: canAct
+                        ? () => _delete([for (final f in files) f.id], title: 'Empty Storage?')
+                        : null,
                     icon: const Icon(Icons.delete_sweep),
                     label: const Text('Empty Storage'),
                   ),
-                  
-                  
                   OutlinedButton.icon(
-                    onPressed: _files.isEmpty ? null : _selectAllFiles,
+                    onPressed: canAct ? _selectAllFiles : null,
                     icon: const Icon(Icons.select_all),
                     label: Text(
-                      _selectedFileIds.length == _files.length
+                      files.isNotEmpty && _selectedFileIds.length == files.length
                           ? 'Deselect All'
                           : 'Select All',
                     ),
                   ),
 
                   FilledButton.icon(
-                    onPressed: _selectedFileIds.isEmpty
+                    onPressed: _selectedFileIds.isEmpty || _busy
                         ? null
-                        : _deleteSelectedFiles,
+                        : () => _delete(_selectedFileIds.toList(), title: 'Delete Selected Files?'),
                     icon: const Icon(Icons.delete),
                     label: Text(
                       'Delete Selected (${_selectedFileIds.length})',
                     ),
                   ),
-
-
                 ],
               ),
 
@@ -500,7 +360,7 @@ Future<void> _deleteSelectedFiles() async {
               ),
               const SizedBox(height: 8),
 
-              if (_files.isEmpty)
+              if (files.isEmpty)
                 const Card(
                   child: Padding(
                     padding: EdgeInsets.all(28),
@@ -514,14 +374,17 @@ Future<void> _deleteSelectedFiles() async {
                           ),
                           SizedBox(height: 12),
                           Text('Your garbage bin is empty.'),
-                          Text('Select files to begin collecting garbage.'),
+                          Text(
+                            'Run Scan storage or Scan a folder to collect garbage.',
+                            textAlign: TextAlign.center,
+                          ),
                         ],
                       ),
                     ),
                   ),
                 )
               else
-                ..._files.map(
+                ...files.map(
                   (file) => Card(
                     child: ListTile(
                       leading: Row(
@@ -529,30 +392,26 @@ Future<void> _deleteSelectedFiles() async {
                         children: [
                           Checkbox(
                             value: _selectedFileIds.contains(file.id),
-                            onChanged: (selected) {
-                              _toggleFileSelection(file, selected ?? false);
-                            },
+                            onChanged: _busy
+                                ? null
+                                : (selected) {
+                                    _toggleFileSelection(file, selected ?? false);
+                                  },
                           ),
-                        Icon(
-                        file.compressed
-                            ? Icons.folder_zip
-                            : Icons.insert_drive_file,
-                        color: file.compressed
-                            ? Colors.green
-                            : Colors.blueGrey,
+                          Icon(
+                            file.compressed ? Icons.folder_zip : Icons.insert_drive_file,
+                            color: file.compressed ? Colors.green : Colors.blueGrey,
                           ),
                         ],
                       ),
-                      
-                       
                       title: Text(
-                        file.name,
+                        file.fileName,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                       subtitle: Text(
-                        'Original: ${_formatSize(file.originalSize)}\n'
-                        'Stored: ${_formatSize(file.storedSize)}'
+                        'Original: ${_formatSize(file.sizeBytes)}\n'
+                        'Stored: ${_formatSize(file.storedSizeBytes)}'
                         '${file.compressed ? " • Compressed" : " • Original retained"}',
                       ),
                       isThreeLine: true,
@@ -562,12 +421,12 @@ Future<void> _deleteSelectedFiles() async {
                           IconButton(
                             tooltip: 'Optimize File',
                             icon: const Icon(Icons.tune),
-                            onPressed: () => _optimizeFile(file),
+                            onPressed: file.compressed || _busy ? null : () => _optimizeFile(file),
                           ),
                           IconButton(
                             tooltip: 'Remove File',
                             icon: const Icon(Icons.close),
-                            onPressed: () => _removeFile(file),
+                            onPressed: _busy ? null : () => _delete([file.id], title: 'Delete ${file.fileName}?'),
                           ),
                         ],
                       ),
@@ -581,8 +440,7 @@ Future<void> _deleteSelectedFiles() async {
                 style: const TextStyle(color: Colors.grey),
               ),
               const Text(
-                'Files are stored temporarily in memory and are cleared '
-                'when the page is refreshed or closed.',
+                'To put a file back where it was, recover it from the Garbage Bin.',
                 style: TextStyle(color: Colors.grey, fontSize: 12),
               ),
             ],

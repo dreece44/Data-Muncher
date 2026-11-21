@@ -51,7 +51,8 @@ void main() {
 
     // nathangh-ung's DAT-16/18 folder scan.
     await tapButton(tester, 'SCAN A FOLDER');
-    await waitFor(tester, find.text('BLURRY (not built yet)'));
+    await waitFor(tester, find.text('UNREADABLE'));
+    expect(find.text('BLURRY'), findsOneWidget);
     expect(find.text('FOLDER MUNCH'), findsOneWidget);
     expect(find.text('DUPLICATES'), findsWidgets);
     await goBack(tester);
@@ -59,7 +60,7 @@ void main() {
     // coilehayden0's DAT-17 garbage storage.
     await tapButton(tester, 'GARBAGE STORAGE');
     await waitFor(tester, find.text('Temporary Storage Manager'));
-    expect(find.text('Collect Files'), findsOneWidget);
+    expect(find.text('Optimize All'), findsOneWidget);
     await goBack(tester);
 
     // Storage scan, then coilehayden0's results page with real numbers.

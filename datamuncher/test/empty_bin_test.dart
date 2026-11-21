@@ -20,7 +20,7 @@ void main() {
       final r = report({'p1', 'd1', 'stale-id'});
       expect(r.requestedCount, 3);
       expect(r.removedCount, 2);
-      expect(r.removedBytes, 4200000 + 350000);
+      expect(r.removedBytes, 3900000 + 120000, reason: 'space they took in the bin, compressed');
       expect(r.keptCount, 1);
     });
 
@@ -39,26 +39,26 @@ void main() {
 
     test('everything, permanently', () {
       expect(describeEmptyBin(report({'p1', 'v1', 'd1'})),
-          'Emptied the bin and freed 905 MB.');
+          'Emptied the bin and freed 884 MB.');
     });
 
     test('everything, to the trash', () {
       expect(
         describeEmptyBin(report({'p1', 'v1', 'd1'}, restorable: trash)),
-        "Emptied the bin: 3 files (905 MB). You can restore them from your "
+        "Emptied the bin: 3 files (884 MB). You can restore them from your "
         "phone's trash for 30 days; the space is freed after that.",
       );
     });
 
     test('some, permanently', () {
       expect(describeEmptyBin(report({'p1', 'd1'})),
-          'Deleted 2 files and freed 4.5 MB. 1 file is still in the bin.');
+          'Deleted 2 files and freed 4 MB. 1 file is still in the bin.');
     });
 
     test('one, to the trash', () {
       expect(
         describeEmptyBin(report({'v1'}, restorable: trash)),
-        'Removed 1 file (900 MB) from the bin. 2 files are still in the bin. '
+        'Removed 1 file (880 MB) from the bin. 2 files are still in the bin. '
         "You can restore it from your phone's trash for 30 days; "
         'the space is freed after that.',
       );

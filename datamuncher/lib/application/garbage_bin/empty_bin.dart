@@ -33,7 +33,7 @@ class EmptyBinReport {
     for (final entry in before) {
       if (outcome.removedIds.contains(entry.id)) {
         count++;
-        bytes += entry.originalSizeBytes;
+        bytes += entry.storedSizeBytes;
       }
     }
     return EmptyBinReport(
@@ -47,7 +47,8 @@ class EmptyBinReport {
   final int requestedCount;
   final int removedCount;
 
-  /// Combined size of the files that left the bin.
+  /// Space freed: what the files that left the bin took up there, which is
+  /// less than their original size when the bin had them compressed.
   final int removedBytes;
 
   final Duration? restorableFor;

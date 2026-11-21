@@ -14,7 +14,7 @@ class FileRecord {
   });
 }
 
-enum WasteCategory { empty, unreadable, duplicate }
+enum WasteCategory { empty, unreadable, duplicate, blurry }
 
 class ClassificationResult {
   final FileRecord file;

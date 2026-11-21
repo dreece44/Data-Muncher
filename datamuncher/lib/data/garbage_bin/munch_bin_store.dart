@@ -11,9 +11,8 @@ import 'garbage_bin_store.dart';
 ///
 /// Photo library items stay where they are (the bin is a list of ids);
 /// storage files from the storage scan are moved into a hidden bin folder
-/// (see [FileBin]). Nothing is compressed yet, so the space used in the bin
-/// equals the file's size. There is no retention limit either, so files stay
-/// until recovered or the bin is emptied.
+/// (see [FileBin]), gzipped there when that saves space (DAT-17). There is
+/// no retention limit, so files stay until recovered or the bin is emptied.
 class MunchBinStore implements GarbageBinStore {
   MunchBinStore(this.state) : _lastRevision = state.binRevision {
     state.addListener(_onStateChanged);
@@ -77,7 +76,7 @@ class MunchBinStore implements GarbageBinStore {
         category: fileCategoryFor(record.fileName),
         reason: record.reason,
         originalSizeBytes: record.sizeBytes,
-        storedSizeBytes: record.sizeBytes,
+        storedSizeBytes: record.storedSizeBytes,
         collectedAt: record.collectedAt,
       ));
     }

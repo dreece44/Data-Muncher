@@ -1,3 +1,4 @@
+import 'dart:async' show unawaited;
 import 'dart:io' show File;
 
 import 'package:flutter/material.dart';
@@ -100,6 +101,8 @@ class _BinPageState extends State<BinPage> {
   @override
   void initState() {
     super.initState();
+    // Files left in the bin folder from before a reinstall show up here too.
+    unawaited(widget.state.adoptStrandedFiles());
     widget.state.systemTrashAvailable().then((value) {
       if (mounted) setState(() => _hasTrash = value);
     });

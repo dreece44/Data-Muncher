@@ -83,6 +83,18 @@ class _HomePageState extends State<HomePage> {
     if (!s.scanned) await s.scan();
     final map = {for (final a in [...s.duplicates, ...s.empty, ...s.blurry]) a.id: a};
     if (!mounted) return;
+    if (s.denied) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('DataMuncher needs photo access to find duplicate, empty and blurry photos.'),
+        action: SnackBarAction(label: 'SETTINGS', onPressed: PhotoManager.openSetting),
+      ));
+      return;
+    }
+    if (!s.scanned) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text("The photo scan didn't finish. Try Rescan photos.")));
+      return;
+    }
     if (map.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nothing to munch. Storage looks clean!')));
       return;
@@ -102,7 +114,8 @@ class _HomePageState extends State<HomePage> {
       await s.collect(map.values);
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Munched ${map.length} items. Empty the bin to free space.')));
+            .showSnackBar(SnackBar(content: Text('Munched ${map.length} ${map.length == 1 ? 'item' : 'items'}. '
+                'Empty the bin to free space.')));
       }
     }
   }
@@ -191,8 +204,8 @@ class _HomePageState extends State<HomePage> {
               ]),
               const SizedBox(height: 10),
               _btn('SCAN STORAGE', null, _openStorageScan),
-              _btn('SCAN A FOLDER', null, () => openFolderMunch(context)),
-              _btn('GARBAGE STORAGE', null, () => openGarbageStorage(context)),
+              _btn('SCAN A FOLDER', null, () => openFolderMunch(context, s)),
+              _btn('GARBAGE STORAGE', null, () => openGarbageStorage(context, s)),
               const SizedBox(height: 6),
               FilledButton(
                 onPressed: s.scanning ? null : _munch,
@@ -203,7 +216,7 @@ class _HomePageState extends State<HomePage> {
                 ),
                 child: Text('MUNCH MY DATA', style: mono.copyWith(fontSize: 22)),
               ),
-              TextButton(onPressed: s.scanning ? null : s.scan, child: const Text('Rescan storage')),
+              TextButton(onPressed: s.scanning ? null : s.scan, child: const Text('Rescan photos')),
             ]),
           ),
         ),

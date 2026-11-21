@@ -18,7 +18,9 @@ class GarbageCollectionPage extends StatefulWidget {
   final List<StorageItem>? items;
 
   /// Moves the chosen items to the garbage bin. Sent items leave the list.
-  final Future<void> Function(List<StorageItem> selected)? onSend;
+  /// Returns a message to show instead of the usual one, e.g. when some
+  /// files couldn't be moved; null keeps the usual message.
+  final Future<String?> Function(List<StorageItem> selected)? onSend;
 
   @override
   State<GarbageCollectionPage> createState() => _GarbageCollectionPageState();
@@ -219,7 +221,7 @@ class _GarbageCollectionPageState extends State<GarbageCollectionPage> {
     //This is where your garbage collection/ file-system
     //will eventually go.
     final onSend = widget.onSend;
-    if (onSend != null) await onSend(selectedItems);
+    final message = onSend == null ? null : await onSend(selectedItems);
     if (!mounted) return;
 
   setState((){
@@ -229,8 +231,8 @@ class _GarbageCollectionPageState extends State<GarbageCollectionPage> {
     if (onSend != null) items.removeWhere(selectedItems.contains);
   });
   ScaffoldMessenger.of(context).showSnackBar(
-    const SnackBar(
-      content: Text("Selected items sent to the garbage bin."),
+    SnackBar(
+      content: Text(message ?? "Selected items sent to the garbage bin."),
     ),
   );
  }
@@ -255,4 +257,4 @@ class _GarbageCollectionPageState extends State<GarbageCollectionPage> {
     }
     return '${bytes.round()} B';
   }
-}
+}

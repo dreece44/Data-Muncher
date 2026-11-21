@@ -14,6 +14,18 @@ const String fileBinFolderName = '.DataMuncherBin';
 /// Prefix of every file-bin id, keeping them apart from photo library ids.
 const String fileBinIdPrefix = 'file:';
 
+/// List of the records kept in each bin folder, next to the files. The app's
+/// own copy of the list is lost when its data is cleared or it is
+/// reinstalled; this one lets it find the files again (see [FileBin.adopt]).
+const String fileBinIndexName = '.datamuncher-index.json';
+
+/// Added to the name of a file the bin keeps gzip-compressed (DAT-17).
+const String compressedSuffix = '.dmgz';
+
+/// Folder that files found in a bin folder with no record of where they came
+/// from are recovered to, under the volume's root.
+const String unknownOriginFolder = 'Download';
+
 /// One storage file held in the Garbage Bin.
 class FileBinRecord {
   const FileBinRecord({
@@ -23,7 +35,9 @@ class FileBinRecord {
     required this.sizeBytes,
     required this.reason,
     required this.collectedAt,
-  });
+    int? storedSizeBytes,
+    this.compressed = false,
+  }) : storedSizeBytes = storedSizeBytes ?? sizeBytes;
 
   final String id;
 
@@ -33,17 +47,41 @@ class FileBinRecord {
   /// Where the file is now, inside a [fileBinFolderName] folder.
   final String storedPath;
 
+  /// Size of the file as the user had it.
   final int sizeBytes;
+
+  /// Space it takes up in the bin; smaller than [sizeBytes] when compressed.
+  final int storedSizeBytes;
+
+  /// Whether [storedPath] holds a gzip-compressed copy (DAT-17).
+  final bool compressed;
+
   final CollectionReason reason;
   final DateTime collectedAt;
 
   String get fileName => p.basename(originalPath);
+
+  /// Space compression saves; never negative.
+  int get bytesSaved => compressed && storedSizeBytes < sizeBytes ? sizeBytes - storedSizeBytes : 0;
+
+  FileBinRecord _stored(String path, int size, {required bool compressed}) => FileBinRecord(
+        id: id,
+        originalPath: originalPath,
+        storedPath: path,
+        sizeBytes: sizeBytes,
+        reason: reason,
+        collectedAt: collectedAt,
+        storedSizeBytes: size,
+        compressed: compressed,
+      );
 
   Map<String, Object?> toJson() => {
         'id': id,
         'originalPath': originalPath,
         'storedPath': storedPath,
         'sizeBytes': sizeBytes,
+        'storedSizeBytes': storedSizeBytes,
+        'compressed': compressed,
         'reason': reason.name,
         'collectedAt': collectedAt.millisecondsSinceEpoch,
       };
@@ -56,11 +94,14 @@ class FileBinRecord {
     if (id is! String || original is! String || stored is! String || size is! int || ms is! int) {
       return null;
     }
+    final storedSize = json['storedSizeBytes'];
     return FileBinRecord(
       id: id,
       originalPath: original,
       storedPath: stored,
       sizeBytes: size,
+      storedSizeBytes: storedSize is int ? storedSize : size,
+      compressed: json['compressed'] == true,
       reason: CollectionReason.values.firstWhere(
         (r) => r.name == json['reason'],
         orElse: () => CollectionReason.other,
@@ -75,11 +116,17 @@ class FileBinRecord {
 /// Photo library items stay in place and the bin only lists their ids. Files
 /// found by the storage scan are different: they're moved into a hidden bin
 /// folder, so they disappear from the phone's file browser and gallery until
-/// recovered or deleted.
+/// recovered or deleted. Files that compress well are kept gzipped there
+/// (DAT-17), so they take less space while they wait.
 class FileBin {
-  FileBin({required this.binFolderFor, Iterable<FileBinRecord> records = const []}) {
+  FileBin({
+    required this.binFolderFor,
+    Iterable<FileBinRecord> records = const [],
+    this.compressOnCollect = true,
+  }) {
     for (final r in records) {
       _records[r.id] = r;
+      _folders.add(p.dirname(r.storedPath));
     }
   }
 
@@ -87,7 +134,16 @@ class FileBin {
   /// storage volume so the move is a rename.
   final String Function(String originalPath) binFolderFor;
 
+  /// Compress files that are likely to shrink as they come in.
+  final bool compressOnCollect;
+
   final Map<String, FileBinRecord> _records = {};
+
+  /// Bin folders this bin has used, whose index files it keeps up to date.
+  final Set<String> _folders = {};
+
+  /// The records changed since the index files were last written.
+  bool _dirty = false;
   int _counter = 0;
 
   Iterable<FileBinRecord> get records => _records.values;
@@ -96,8 +152,15 @@ class FileBin {
   bool contains(String id) => _records.containsKey(id);
   FileBinRecord? operator [](String id) => _records[id];
 
-  /// Moves the file at [path] into the bin. Throws [FileSystemException] if
-  /// it can't be moved; the file is then left where it was.
+  /// Space the bin's files take up on the phone.
+  int get storedBytes => _records.values.fold(0, (sum, r) => sum + r.storedSizeBytes);
+
+  /// Space compression is saving.
+  int get bytesSaved => _records.values.fold(0, (sum, r) => sum + r.bytesSaved);
+
+  /// Moves the file at [path] into the bin, compressing it if that's likely
+  /// to help. Throws [FileSystemException] if it can't be moved; the file is
+  /// then left where it was.
   Future<FileBinRecord> collect(String path, CollectionReason reason, {DateTime? now}) async {
     final when = now ?? DateTime.now();
     final source = File(path);
@@ -111,7 +174,7 @@ class FileBin {
     final key = '${when.microsecondsSinceEpoch}-${_counter++}';
     final stored = p.join(folder.path, '${key}_${p.basename(path)}');
     await _move(source, stored);
-    final record = FileBinRecord(
+    var record = FileBinRecord(
       id: '$fileBinIdPrefix$key',
       originalPath: path,
       storedPath: stored,
@@ -120,19 +183,66 @@ class FileBin {
       collectedAt: when,
     );
     _records[record.id] = record;
+    _folders.add(folder.path);
+    _dirty = true;
+    if (compressOnCollect && worthCompressing(path)) {
+      record = await compress(record.id) ?? record;
+    }
     return record;
+  }
+
+  /// Gzips a file in the bin (DAT-17). Keeps the compressed copy only when
+  /// it is smaller; returns the updated record, or null when compressing
+  /// didn't help or the file is already compressed. The original stays
+  /// untouched if anything goes wrong.
+  Future<FileBinRecord?> compress(String id) async {
+    final record = _records[id];
+    if (record == null || record.compressed) return null;
+    final source = File(record.storedPath);
+    final target = File('${record.storedPath}$compressedSuffix');
+    try {
+      await source.openRead().transform(gzip.encoder).pipe(target.openWrite());
+      final packed = await target.length();
+      if (packed >= await source.length()) {
+        await target.delete();
+        return null;
+      }
+      await source.delete();
+      final updated = record._stored(target.path, packed, compressed: true);
+      _records[id] = updated;
+      _dirty = true;
+      return updated;
+    } on Exception {
+      // Out of space, file vanished, etc.: keep the uncompressed copy.
+      if (await target.exists()) await target.delete();
+      return null;
+    }
   }
 
   /// Moves a file back to where it was collected from and returns the path
   /// it now has. If another file has taken that name since, the recovered
   /// file gets a free name like `photo (1).jpg` instead of overwriting it.
+  /// Compressed files are unpacked on the way out.
   Future<String> restore(String id) async {
     final record = _records[id];
     if (record == null) throw StateError('$id is not in the file bin');
     final target = await _freePath(record.originalPath);
     await Directory(p.dirname(target)).create(recursive: true);
-    await _move(File(record.storedPath), target);
+    if (record.compressed) {
+      final partial = File('$target.part');
+      try {
+        await File(record.storedPath).openRead().transform(gzip.decoder).pipe(partial.openWrite());
+        await partial.rename(target);
+      } catch (_) {
+        if (await partial.exists()) await partial.delete();
+        rethrow;
+      }
+      await File(record.storedPath).delete();
+    } else {
+      await _move(File(record.storedPath), target);
+    }
     _records.remove(id);
+    _dirty = true;
     return target;
   }
 
@@ -143,6 +253,7 @@ class FileBin {
     final file = File(record.storedPath);
     if (await file.exists()) await file.delete();
     _records.remove(id);
+    _dirty = true;
   }
 
   /// Whether the file is still in the bin folder (it may have been removed
@@ -153,7 +264,9 @@ class FileBin {
   }
 
   /// Forgets an entry without touching any file.
-  void forget(String id) => _records.remove(id);
+  void forget(String id) {
+    if (_records.remove(id) != null) _dirty = true;
+  }
 
   List<String> encode() => [for (final r in _records.values) jsonEncode(r.toJson())];
 
@@ -168,6 +281,106 @@ class FileBin {
     } on FormatException {
       return null;
     }
+  }
+
+  /// Writes each bin folder's [fileBinIndexName] after the records changed.
+  /// A folder that can't be written to is skipped; the app's own list still
+  /// has the records.
+  Future<void> saveIndexes() async {
+    if (!_dirty) return;
+    _dirty = false;
+    for (final folder in _folders) {
+      final here = [
+        for (final r in _records.values)
+          if (p.equals(p.dirname(r.storedPath), folder)) r.toJson(),
+      ];
+      try {
+        if (!await Directory(folder).exists()) continue;
+        await File(p.join(folder, fileBinIndexName)).writeAsString(jsonEncode(here));
+      } on FileSystemException {
+        // Read-only or no longer mounted.
+      }
+    }
+  }
+
+  /// Takes in files in [folder] that this bin has no record of, after the
+  /// app's data was cleared or it was reinstalled. Records come from the
+  /// folder's index; a file with none (binned by an older version) is
+  /// recovered to [recoverTo] under its own name. Returns how many files
+  /// were added.
+  Future<int> adopt(String folder, {required String recoverTo}) async {
+    final dir = Directory(folder);
+    if (!await dir.exists()) return 0;
+    _folders.add(folder);
+    final known = {for (final r in _records.values) p.normalize(r.storedPath)};
+    var adopted = 0;
+
+    void add(FileBinRecord r) {
+      _records[r.id] = r;
+      known.add(p.normalize(r.storedPath));
+      adopted++;
+    }
+
+    final index = File(p.join(folder, fileBinIndexName));
+    if (await index.exists()) {
+      Object? list;
+      try {
+        list = jsonDecode(await index.readAsString());
+      } on FormatException {
+        list = null;
+      }
+      if (list is List) {
+        for (final json in list) {
+          var r = FileBinRecord.fromJson(json);
+          if (r == null || _records.containsKey(r.id)) continue;
+          // The volume may be mounted under a different path now.
+          final here = p.join(folder, p.basename(r.storedPath));
+          if (!await File(r.storedPath).exists()) {
+            if (!await File(here).exists()) continue;
+            r = r._stored(here, r.storedSizeBytes, compressed: r.compressed);
+          }
+          if (known.contains(p.normalize(r.storedPath))) continue;
+          add(r);
+        }
+      }
+    }
+
+    await for (final entity in dir.list(followLinks: false)) {
+      if (entity is! File) continue;
+      final name = p.basename(entity.path);
+      if (name.startsWith('.') || name.endsWith('.part')) continue;
+      if (known.contains(p.normalize(entity.path))) continue;
+      final r = await _recordForUnlisted(entity, recoverTo);
+      if (_records.containsKey(r.id)) continue;
+      add(r);
+    }
+    if (adopted > 0) _dirty = true;
+    return adopted;
+  }
+
+  /// A record for a file found in a bin folder with no index entry. Its
+  /// stored name `<micros>-<n>_<name>` gives the original name and when it
+  /// was binned; where it came from is unknown.
+  static Future<FileBinRecord> _recordForUnlisted(File file, String recoverTo) async {
+    var name = p.basename(file.path);
+    final compressed = name.endsWith(compressedSuffix);
+    if (compressed) name = name.substring(0, name.length - compressedSuffix.length);
+    final match = RegExp(r'^(\d+)-(\d+)_(.+)$').firstMatch(name);
+    final stat = await file.stat();
+    final key = match == null ? 'found-${stat.modified.microsecondsSinceEpoch}-$name' : '${match[1]}-${match[2]}';
+    final micros = match == null ? null : int.tryParse(match[1]!);
+    return FileBinRecord(
+      id: '$fileBinIdPrefix$key',
+      originalPath: p.join(recoverTo, match?[3] ?? name),
+      storedPath: file.path,
+      // The original size of a compressed file isn't known without
+      // unpacking it; the stored size is the best guess.
+      sizeBytes: stat.size,
+      storedSizeBytes: stat.size,
+      compressed: compressed,
+      reason: CollectionReason.other,
+      collectedAt: micros == null ? stat.modified : DateTime.fromMicrosecondsSinceEpoch(micros),
+    );
   }
 
   /// Rename when possible; copy and delete when the bin folder is on another
@@ -200,6 +413,22 @@ String binFolderUnder(List<String> roots, String path) {
     if (p.isWithin(root, path)) return p.join(root, fileBinFolderName);
   }
   return p.join(roots.isEmpty ? p.dirname(path) : roots.first, fileBinFolderName);
+}
+
+/// Whether gzip is likely to shrink a file, judged by its extension. Photos,
+/// videos, music and archives are already compressed, so trying would only
+/// cost time (the Garbage Storage page can still try one by hand).
+bool worthCompressing(String name) {
+  final dot = name.lastIndexOf('.');
+  final ext = dot < 0 ? '' : name.substring(dot + 1).toLowerCase();
+  if (fileCategoryFor(name) case FileCategory.photo || FileCategory.video || FileCategory.audio || FileCategory.app) {
+    return false;
+  }
+  const packed = {
+    'zip', 'gz', 'tgz', 'bz2', 'xz', '7z', 'rar', 'jar', 'aab', 'obb', //
+    'docx', 'xlsx', 'pptx', 'odt', 'ods', 'odp', 'epub', 'dmgz', //
+  };
+  return !packed.contains(ext);
 }
 
 /// File type for the bin's icon and category filter, from the extension.

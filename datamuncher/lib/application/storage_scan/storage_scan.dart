@@ -58,6 +58,40 @@ List<ScanCandidate> candidatesFrom(engine.ScanReport report, {bool Function(Stri
 
 int _rank(engine.Finding f) => _priority.indexOf(f.category);
 
+/// A check the scan didn't finish, explained on the results page so a
+/// missing category isn't mistaken for "nothing found".
+class SkippedCheck {
+  const SkippedCheck({required this.category, required this.state, required this.message});
+
+  final engine.WasteCategory category;
+  final engine.CategoryState state;
+  final String message;
+
+  /// The unused-app check was skipped for want of Android's Usage access,
+  /// which the user can turn on.
+  bool get needsUsageAccess =>
+      category == engine.WasteCategory.unusedApp && state == engine.CategoryState.skipped;
+}
+
+/// The categories in [report] that were skipped, unsupported or failed.
+List<SkippedCheck> skippedChecksFrom(engine.ScanReport report) => [
+      for (final MapEntry(key: category, value: result) in report.categories.entries)
+        if (result.state != engine.CategoryState.completed)
+          SkippedCheck(
+            category: category,
+            state: result.state,
+            message: switch (result.state) {
+              engine.CategoryState.skipped when category == engine.WasteCategory.unusedApp =>
+                "Unused apps weren't checked. DataMuncher needs Usage access to see "
+                    "which apps you haven't opened in a while.",
+              engine.CategoryState.skipped => "${category.label} weren't checked: ${result.note ?? 'permission missing'}.",
+              engine.CategoryState.unsupported =>
+                "${category.label} can't be checked on this phone${result.note == null ? '' : ': ${result.note}'}.",
+              _ => "Couldn't check ${category.label.toLowerCase()}${result.note == null ? '' : ': ${result.note}'}.",
+            },
+          ),
+    ];
+
 /// Unused-app findings, which the user deals with by uninstalling.
 List<engine.InstalledApp> unusedAppsFrom(engine.ScanReport report) => [
       for (final finding in report.findingsFor(engine.WasteCategory.unusedApp))

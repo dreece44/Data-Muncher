@@ -3,9 +3,13 @@
 // summary ready for the UI to display.
 
 import 'dart:io';
+import 'dart:isolate';
+
 import 'package:crypto/crypto.dart';
-import 'models.dart';
+import 'package:path/path.dart' as p;
+
 import 'classifier.dart';
+import 'models.dart';
 
 // Hashing a multi-gigabyte video for a demo scan would be slow, so skip it,
 // same cutoff the Python version used.
@@ -16,29 +20,48 @@ String _hashFile(File file) {
   return sha256.convert(bytes).toString();
 }
 
-List<FileRecord> scanFolder(String rootPath) {
+/// Every file under [rootPath]. Hidden folders (names starting with a dot,
+/// such as the Garbage Bin's own `.DataMuncherBin`) are left out. A folder
+/// that can't be opened, like Android's `Android/data`, is passed to
+/// [onSkip] and skipped rather than ending the scan.
+List<FileRecord> scanFolder(String rootPath, {void Function(String folder)? onSkip}) {
   final files = <FileRecord>[];
-  final dir = Directory(rootPath);
-  if (!dir.existsSync()) return files;
+  final pending = [Directory(rootPath)];
+  if (!pending.first.existsSync()) return files;
 
-  for (final entity in dir.listSync(recursive: true, followLinks: false)) {
-    if (entity is! File) continue;
-
-    int size = 0;
-    bool readable = true;
-    String? hash;
+  while (pending.isNotEmpty) {
+    final dir = pending.removeLast();
+    final List<FileSystemEntity> entries;
     try {
-      size = entity.lengthSync();
-      if (size > 0 && size <= _maxHashBytes) {
-        hash = _hashFile(entity);
-      }
-    } catch (_) {
-      readable = false;
+      entries = dir.listSync(followLinks: false);
+    } on FileSystemException {
+      onSkip?.call(dir.path);
+      continue;
     }
+    for (final entity in entries) {
+      if (p.basename(entity.path).startsWith('.')) continue;
+      if (entity is Directory) {
+        pending.add(entity);
+        continue;
+      }
+      if (entity is! File) continue;
 
-    files.add(FileRecord(path: entity.path, sizeBytes: size, isReadable: readable, contentHash: hash));
+      int size = 0;
+      bool readable = true;
+      String? hash;
+      try {
+        size = entity.lengthSync();
+        if (size > 0 && size <= _maxHashBytes) {
+          hash = _hashFile(entity);
+        }
+      } catch (_) {
+        readable = false;
+      }
+      files.add(FileRecord(path: entity.path, sizeBytes: size, isReadable: readable, contentHash: hash));
+    }
   }
 
+  files.sort((a, b) => a.path.compareTo(b.path));
   return files;
 }
 
@@ -48,12 +71,32 @@ class MunchResult {
   final int totalScanned;
   final int totalBytesScanned;
 
+  /// Folders that couldn't be opened and were left out.
+  final List<String> skippedFolders;
+
+  /// Every file that was scanned, for checks that run afterwards (blurry
+  /// photos need the phone's image decoder).
+  final List<FileRecord> files;
+
   MunchResult({
     required this.items,
     required this.summary,
     required this.totalScanned,
     required this.totalBytesScanned,
+    this.skippedFolders = const [],
+    this.files = const [],
   });
+
+  /// The same scan with [items] in place of what was found, e.g. after
+  /// blurry photos were added or files were moved to the Garbage Bin.
+  MunchResult withItems(List<ClassificationResult> items) => MunchResult(
+        items: items,
+        summary: summarize(items),
+        totalScanned: totalScanned,
+        totalBytesScanned: totalBytesScanned,
+        skippedFolders: skippedFolders,
+        files: files,
+      );
 
   String get humanSummary {
     final freedMb = summary.totalBytesReclaimable / (1024 * 1024);
@@ -63,7 +106,8 @@ class MunchResult {
 }
 
 MunchResult munchMyData(String rootPath) {
-  final files = scanFolder(rootPath);
+  final skipped = <String>[];
+  final files = scanFolder(rootPath, onSkip: skipped.add);
   final results = classifyFiles(files);
   final summary = summarize(results);
   final totalBytes = files.fold<int>(0, (sum, f) => sum + f.sizeBytes);
@@ -73,5 +117,11 @@ MunchResult munchMyData(String rootPath) {
     summary: summary,
     totalScanned: files.length,
     totalBytesScanned: totalBytes,
+    skippedFolders: skipped,
+    files: files,
   );
 }
+
+/// [munchMyData] on a background isolate, so hashing a big folder doesn't
+/// freeze the app.
+Future<MunchResult> munchMyDataInBackground(String rootPath) => Isolate.run(() => munchMyData(rootPath));

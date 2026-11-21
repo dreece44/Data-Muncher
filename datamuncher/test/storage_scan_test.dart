@@ -133,4 +133,46 @@ void main() {
     final rescan = await engine.ScanEngine(device: device).scan();
     expect(candidatesFrom(rescan), isEmpty);
   }, skip: sample.existsSync() ? false : 'Run `dart run tool/make_sample_storage.dart` in packages/scan_engine first');
+
+  group('skippedChecksFrom', () {
+    engine.ScanReport withCategories(Map<engine.WasteCategory, engine.CategoryResult> c) => engine.ScanReport(
+          platform: engine.DevicePlatform.android,
+          startedAt: DateTime(2026),
+          finishedAt: DateTime(2026),
+          storage: null,
+          itemsScanned: 0,
+          bytesScanned: 0,
+          findings: const [],
+          categories: c,
+          issues: const [],
+          notes: const [],
+        );
+
+    test('explains unused apps skipped for want of Usage access', () {
+      final checks = skippedChecksFrom(withCategories({
+        engine.WasteCategory.emptyFile: const engine.CategoryResult(engine.CategoryState.completed),
+        engine.WasteCategory.unusedApp: const engine.CategoryResult(
+            engine.CategoryState.skipped, 'App usage access has not been granted (denied)'),
+      }));
+      expect(checks, hasLength(1));
+      expect(checks.single.needsUsageAccess, isTrue);
+      expect(checks.single.message, contains('Usage access'));
+    });
+
+    test('reports failed and unsupported checks without a button', () {
+      final checks = skippedChecksFrom(withCategories({
+        engine.WasteCategory.duplicatePhoto: const engine.CategoryResult(engine.CategoryState.failed, 'out of memory'),
+        engine.WasteCategory.unusedApp: const engine.CategoryResult(engine.CategoryState.unsupported, 'iOS'),
+      }));
+      expect(checks.map((c) => c.message), [
+        "Couldn't check duplicate photos: out of memory.",
+        "Unused apps can't be checked on this phone: iOS.",
+      ]);
+      expect(checks.any((c) => c.needsUsageAccess), isFalse);
+    });
+
+    test('nothing to say when every check finished', () {
+      expect(skippedChecksFrom(report(const [])), isEmpty);
+    });
+  });
 }

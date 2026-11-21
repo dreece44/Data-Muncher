@@ -54,10 +54,16 @@ class ScanResults{
 //---------------------------------------------
 
 class StorageResultsPage extends StatelessWidget {
-  const StorageResultsPage({super.key, this.scanResults});
+  const StorageResultsPage({super.key, this.scanResults, this.onViewDetails, this.onExport});
 
   /// Real scan output from the app. Null shows the sample data below.
   final ScanResults? scanResults;
+
+  /// Opens the file-by-file list. The button is disabled when null.
+  final VoidCallback? onViewDetails;
+
+  /// Saves the results somewhere the user picks. Disabled when null.
+  final VoidCallback? onExport;
 
   // Sample data so the layout can be previewed. Replace with real scan output.
   ScanResults get results {
@@ -130,7 +136,27 @@ class StorageResultsPage extends StatelessWidget {
             ),
             const SizedBox(height: 20),
 
-// Wasted Digital Space Notification
+// Wasted Digital Space Notification, or the all-clear when nothing was found
+if (scan.reclaimable.isEmpty)
+  Card(
+    color: Colors.green.shade50,
+    child: const Padding(
+      padding: EdgeInsets.all(16.0),
+      child: Row(
+        children: [
+          Icon(Icons.check_circle_outline, color: Colors.green, size: 36),
+          SizedBox(width: 15),
+          Expanded(
+            child: Text(
+              "No wasted space found",
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green),
+            ),
+          ),
+        ],
+      ),
+    ),
+  )
+else
 Card(
   color: Colors.orange.shade50,
   child: Padding(
@@ -325,6 +351,7 @@ Card(
                     ),
 
                     const SizedBox(height: 15),
+                    if (scan.reclaimable.isEmpty) const Text("Nothing to reclaim."),
                     ...scan.reclaimable.entries.map(
                       (entry){
                         return Padding(
@@ -406,9 +433,7 @@ Card(
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () {
-                      //open detailed scan results
-                    },
+                    onPressed: onViewDetails,
 
                     icon: const Icon(Icons.list),
                     label: const Text("View Details"),
@@ -423,9 +448,7 @@ Card(
                 const SizedBox(width: 15),
                 Expanded(
                   child: ElevatedButton.icon(
-                    onPressed: () {
-                      //Export Scan Results
-                    },
+                    onPressed: onExport,
                     icon: const Icon(Icons.download),
                     label: const Text("Export Results"),
                     style: ElevatedButton.styleFrom(

@@ -4,6 +4,7 @@ import 'package:disk_space_plus/disk_space_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
+import 'package:path/path.dart' as p;
 import 'package:photo_manager/photo_manager.dart';
 import 'package:scan_engine_flutter/scan_engine_flutter.dart' show NativeBridge;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -144,8 +145,10 @@ class MunchState extends ChangeNotifier {
   Map<String, CollectionReason> _flags = {};
   late SharedPreferences _p;
 
-  Iterable<AssetEntity> get images => all.where((a) => a.type == AssetType.image);
-  Iterable<AssetEntity> get videos => all.where((a) => a.type == AssetType.video);
+  /// Photos and videos for Image Select / Video Select. Items already in the
+  /// Garbage Bin are left out: they can't be munched twice.
+  Iterable<AssetEntity> get images => all.where((a) => a.type == AssetType.image && !bin.contains(a.id));
+  Iterable<AssetEntity> get videos => all.where((a) => a.type == AssetType.video && !bin.contains(a.id));
 
   /// Everything in the Garbage Bin: photo library items and storage files.
   int get binCount => bin.length + fileBin.length;
@@ -153,6 +156,10 @@ class MunchState extends ChangeNotifier {
 
   /// Whether a storage file at [path] was recovered with "Do not collect".
   bool isExcludedPath(String path) => (excluded[path] ?? 0) > DateTime.now().millisecondsSinceEpoch;
+
+  /// Whether a photo library item was recovered with "Do not collect" and
+  /// the 30 days haven't run out yet.
+  bool isExcludedAsset(String id) => (excluded[id] ?? 0) > DateTime.now().millisecondsSinceEpoch;
 
   Future<void> init() async {
     _p = await SharedPreferences.getInstance();
@@ -177,6 +184,7 @@ class MunchState extends ChangeNotifier {
       records: FileBin.decode(_p.getStringList('fileBin') ?? const []),
     );
     binRevision++;
+    await adoptStrandedFiles();
     await refreshStorage();
     await scan();
   }
@@ -189,6 +197,59 @@ class MunchState extends ChangeNotifier {
     ]);
     await _p.setStringList('excl', [for (final e in excluded.entries) '${e.key}|${e.value}']);
     await _p.setStringList('fileBin', fileBin.encode());
+    try {
+      await fileBin.saveIndexes();
+    } catch (_) {
+      // The app's own list above is enough to keep working.
+    }
+  }
+
+  /// The phone's storage volumes (internal storage, SD cards). Android only.
+  Future<List<String>> _roots() async {
+    if (_storageRoots.isEmpty && Platform.isAndroid) {
+      try {
+        _storageRoots = await const NativeBridge().androidStorageRoots();
+      } catch (_) {}
+    }
+    return _storageRoots;
+  }
+
+  Future<void>? _adopting;
+
+  /// Puts files back on the bin's list that are still in a bin folder but
+  /// that the app lost track of, e.g. after its data was cleared or it was
+  /// reinstalled. Needs file access; does nothing without it.
+  Future<void> adoptStrandedFiles() => _adopting ??= _adoptStrandedFiles().whenComplete(() => _adopting = null);
+
+  Future<void> _adoptStrandedFiles() async {
+    if (!Platform.isAndroid) return;
+    var adopted = 0;
+    for (final root in await _roots()) {
+      try {
+        adopted += await fileBin.adopt(
+          p.join(root, fileBinFolderName),
+          recoverTo: p.join(root, unknownOriginFolder),
+        );
+      } on FileSystemException {
+        // No file access yet; tried again once the user allows it.
+      }
+    }
+    if (adopted == 0) return;
+    binRevision++;
+    await _save();
+    notifyListeners();
+  }
+
+  /// Compresses a storage file in the bin (DAT-17). Returns the updated
+  /// record, or null if compressing didn't make it smaller.
+  Future<FileBinRecord?> compressFile(String id) async {
+    final updated = await fileBin.compress(id);
+    if (updated == null) return null;
+    binRevision++;
+    await _save();
+    notifyListeners();
+    await refreshStorage();
+    return updated;
   }
 
   /// Storage indicator data, and the storage-full warning (DAT-36).
@@ -221,7 +282,8 @@ class MunchState extends ChangeNotifier {
     storageLevel = StorageAlertService.instance.policy.levelOf(reading);
   }
 
-  /// Mass storage scan + bad photo detection.
+  /// Photo library scan + bad photo detection. If the phone fails partway,
+  /// the previous results stay and the home page stops showing SCANNING.
   Future<void> scan() async {
     final perm = await PhotoManager.requestPermissionExtend();
     denied = !perm.hasAccess;
@@ -229,12 +291,20 @@ class MunchState extends ChangeNotifier {
     scanning = true;
     progress = 0;
     notifyListeners();
-
-    final paths = await PhotoManager.getAssetPathList(onlyAll: true);
-    if (paths.isEmpty) {
+    try {
+      await _scanLibrary();
+    } catch (e) {
+      debugPrint('Photo scan failed: $e');
+    } finally {
       scanning = false;
-      return notifyListeners();
+      notifyListeners();
     }
+    await refreshStorage();
+  }
+
+  Future<void> _scanLibrary() async {
+    final paths = await PhotoManager.getAssetPathList(onlyAll: true);
+    if (paths.isEmpty) return;
     final count = await paths.first.assetCountAsync;
     all = await paths.first.getAssetListRange(start: 0, end: count);
 
@@ -245,7 +315,7 @@ class MunchState extends ChangeNotifier {
 
     for (var i = 0; i < all.length; i++) {
       final a = all[i];
-      if (!bin.contains(a.id) && !excluded.containsKey(a.id)) {
+      if (!bin.contains(a.id) && !isExcludedAsset(a.id)) {
         // A damaged photo or video has no thumbnail; the phone throws rather
         // than returning null. Treat it as missing so it's flagged, not fatal.
         img.Image? im;
@@ -307,9 +377,7 @@ class MunchState extends ChangeNotifier {
     empty = emp;
     blurry = blu;
     _flags = flags;
-    scanning = false;
     scanned = true;
-    await refreshStorage();
   }
 
   /// Garbage Collection: send items to the Garbage Bin. [reason] overrides
@@ -346,11 +414,7 @@ class MunchState extends ChangeNotifier {
   /// moved to the bin folder on its volume; one that can't be moved is left
   /// in place and listed in [FileCollection.failed].
   Future<FileCollection> collectFiles(Iterable<ScanCandidate> candidates) async {
-    if (_storageRoots.isEmpty && Platform.isAndroid) {
-      try {
-        _storageRoots = await const NativeBridge().androidStorageRoots();
-      } catch (_) {}
-    }
+    await _roots();
     final now = DateTime.now();
     final movedFrom = <String>[];
     final failed = <String>[];
@@ -369,6 +433,8 @@ class MunchState extends ChangeNotifier {
       await _save();
       notifyListeners();
       await MediaIndex.refresh(movedFrom);
+      // Compressed files take less space in the bin than they did before.
+      await refreshStorage();
     }
     return FileCollection(moved: movedFrom.length, bytes: bytes, failed: failed);
   }

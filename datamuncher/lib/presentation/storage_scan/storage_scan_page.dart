@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:scan_engine_flutter/scan_engine_flutter.dart' as engine;
 
@@ -31,13 +35,45 @@ class _StorageScanPageState extends State<StorageScanPage> {
   engine.ScanReport? _report;
   List<ScanCandidate> _candidates = const [];
   List<engine.InstalledApp> _apps = const [];
+  List<SkippedCheck> _skipped = const [];
   final Set<String> _selected = {};
   bool _moving = false;
+
+  /// Set while the user is on Android's Usage access screen; the scan runs
+  /// again when they come back with it turned on.
+  bool _waitingForUsageAccess = false;
+  late final AppLifecycleListener _lifecycle;
 
   @override
   void initState() {
     super.initState();
+    _lifecycle = AppLifecycleListener(onResume: _onResume);
     _scan();
+  }
+
+  @override
+  void dispose() {
+    _lifecycle.dispose();
+    super.dispose();
+  }
+
+  Future<void> _onResume() async {
+    if (!_waitingForUsageAccess) return;
+    _waitingForUsageAccess = false;
+    final device = await _deviceAdapter();
+    final state = await device.permissions.check(engine.ScanPermission.appUsage);
+    if (mounted && state.allowsAccess) await _scan();
+  }
+
+  /// Opens Settings → Usage access so unused apps can be found.
+  Future<void> _allowUsageAccess() async {
+    final device = await _deviceAdapter();
+    _waitingForUsageAccess = true;
+    final state = await device.permissions.request(engine.ScanPermission.appUsage);
+    if (state.allowsAccess && mounted) {
+      _waitingForUsageAccess = false;
+      await _scan();
+    }
   }
 
   Future<engine.DeviceAdapter> _deviceAdapter() async => _device ??= await engine.currentDevice();
@@ -55,6 +91,8 @@ class _StorageScanPageState extends State<StorageScanPage> {
           return;
         }
       }
+      // With file access granted, pick up bin files the app lost track of.
+      await widget.state.adoptStrandedFiles();
       final report = await engine.ScanEngine(device: device).scan(onProgress: (p) {
         if (mounted) setState(() => _status = _describe(p));
       });
@@ -64,6 +102,7 @@ class _StorageScanPageState extends State<StorageScanPage> {
         _report = report;
         _candidates = candidates;
         _apps = unusedAppsFrom(report);
+        _skipped = skippedChecksFrom(report);
         _selected
           ..clear()
           ..addAll(candidates.map((c) => c.item.id));
@@ -114,16 +153,41 @@ class _StorageScanPageState extends State<StorageScanPage> {
       final result = await widget.state.collectFiles(picked);
       final failed = result.failed.toSet();
       final moved = {for (final c in picked) if (!failed.contains(c.path)) c.item.id};
-      if (!mounted) return;
-      setState(() {
-        _candidates = [for (final c in _candidates) if (!moved.contains(c.item.id)) c];
-        _selected.removeAll(moved);
-      });
-      if (failed.isNotEmpty) {
-        // They stay in this page's list to try again.
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("${failed.length} couldn't be moved.")));
+      if (mounted) {
+        setState(() {
+          _candidates = [for (final c in _candidates) if (!moved.contains(c.item.id)) c];
+          _selected.removeAll(moved);
+        });
       }
+      // Failed files stay in this page's list to try again.
+      return failed.isEmpty
+          ? null
+          : "Moved ${result.moved} to the garbage bin. ${failed.length} couldn't be moved; "
+              'they are still listed on the scan page.';
     });
+  }
+
+  /// Export Results on the summary page: saves the scan as a text file
+  /// wherever the user picks.
+  Future<void> _export() async {
+    final report = _report;
+    if (report == null) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final now = DateTime.now();
+    String two(int n) => n.toString().padLeft(2, '0');
+    final name = 'DataMuncher scan ${now.year}-${two(now.month)}-${two(now.day)}.txt';
+    try {
+      final saved = await FilePicker.platform.saveFile(
+        dialogTitle: 'Export scan results',
+        fileName: name,
+        type: FileType.custom,
+        allowedExtensions: const ['txt'],
+        bytes: Uint8List.fromList(utf8.encode(engine.formatReport(report, maxPerCategory: 1000))),
+      );
+      if (saved != null) messenger.showSnackBar(SnackBar(content: Text('Saved $name.')));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text("Couldn't export the results: $e")));
+    }
   }
 
   static String _describe(engine.ScanProgress p) => switch (p.phase) {
@@ -215,10 +279,30 @@ class _StorageScanPageState extends State<StorageScanPage> {
               padding: const EdgeInsets.only(top: 6),
               child: Text(note, style: const TextStyle(fontSize: 12, color: Colors.white60)),
             ),
+          for (final check in _skipped)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Icon(Icons.info_outline, size: 18, color: Colors.amber),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(check.message, style: const TextStyle(fontSize: 13)),
+                    if (check.needsUsageAccess)
+                      TextButton(
+                        onPressed: _moving ? null : _allowUsageAccess,
+                        style: TextButton.styleFrom(padding: EdgeInsets.zero, foregroundColor: green),
+                        child: const Text('ALLOW USAGE ACCESS'),
+                      ),
+                  ]),
+                ),
+              ]),
+            ),
           const SizedBox(height: 12),
           Wrap(spacing: 8, runSpacing: 8, children: [
             OutlinedButton.icon(
-              onPressed: () => openStorageResults(context, scanResultsFrom(report, _candidates, _apps)),
+              onPressed: () =>
+                  openStorageResults(context, scanResultsFrom(report, _candidates, _apps), onExport: _export),
               icon: const Icon(Icons.pie_chart_outline),
               label: const Text('Summary'),
             ),
