@@ -1,0 +1,37 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Android 11+: "All files access". The user turns it on in Settings.
+         Google Play requires a policy declaration for this permission. -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+
+    <!-- Android 10 and older: the classic storage permission. -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+
+    <!-- "Usage access", needed to see when apps were last used. The user
+         turns it on in Settings; it can't be requested with a dialog. -->
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- Android 11+ hides other apps unless declared. Launchable apps are all
+         unused-app detection needs, so QUERY_ALL_PACKAGES isn't required. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
+    </queries>
+
+    <!-- Android 10 only: opt out of scoped storage so the whole of shared
+         storage can be read. -->
+    <application android:requestLegacyExternalStorage="true" />
+</manifest>

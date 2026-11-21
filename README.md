@@ -89,6 +89,11 @@ flutter test
 |---|---|
 | `app/` | The DataMuncher app: scanning, Garbage Bin, Do not collect, unused apps and plans. See `app/README.md` for how it's built. |
 | `hayden-screens/` | Garbage Bin storage screens: compressed backups, bulk delete, restore and export (`flutter run` from that folder), and the Storage Results and swipe-review page (`flutter run -t lib/storage_results.dart`). |
+| `datamuncher/` | The integration app built on the scan engine: Scan storage, Scan a folder, the Garbage Bin with compressed file storage, duplicate groups and storage-full warnings. See `datamuncher/README.md`. |
+| [`packages/scan_engine`](packages/scan_engine) | The scanning engine (pure Dart). Runs on phones and on a computer, with a command-line scanner for testing. |
+| [`packages/scan_engine_flutter`](packages/scan_engine_flutter) | Android and iOS adapters for the engine: storage, photos, apps and permissions on real devices. |
+| [`packages/deep_scans`](packages/deep_scans) | Focused scans for duplicate documents, blurry photos, screenshots and large old videos, with their rulesets in `docs/`. |
+| `dat-27-28-flutter/` | The original stand-alone Garbage Bin viewer (DAT-27/28), kept for reference; the same code lives in `datamuncher/`. |
 
 ## Team
 
