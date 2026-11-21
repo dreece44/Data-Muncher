@@ -272,7 +272,7 @@ class FileBin {
 
   static List<FileBinRecord> decode(Iterable<String> lines) => [
         for (final line in lines)
-          if (_tryDecode(line) case final record?) record,
+          ?_tryDecode(line),
       ];
 
   static FileBinRecord? _tryDecode(String line) {

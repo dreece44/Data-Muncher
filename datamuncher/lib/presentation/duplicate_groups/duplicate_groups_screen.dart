@@ -152,7 +152,7 @@ class _DuplicateGroupsScreenState extends State<DuplicateGroupsScreen> {
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: group.members.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                separatorBuilder: (_, _) => const SizedBox(width: 8),
                 itemBuilder: (_, k) {
                   final id = group.members[k].id;
                   return _tile(id, kept: id == keep, best: id == group.bestId, removing: included && id != keep,

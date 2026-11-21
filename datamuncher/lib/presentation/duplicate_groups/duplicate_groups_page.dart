@@ -37,7 +37,7 @@ class _DuplicateGroupsPageState extends State<DuplicateGroupsPage> {
   Future<String> _remove(List<String> ids, DuplicateRemoval how) async {
     final assets = [
       for (final id in ids)
-        if (_assets[id] case final a?) a
+        ?_assets[id]
     ];
     final n = assets.length;
     String count(int k) => '$k duplicate${k == 1 ? '' : 's'}';

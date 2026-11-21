@@ -73,7 +73,7 @@ void main() {
         Uint8List.fromList([for (var y = 0; y < size; y++) for (var x = 0; x < size; x++) f(x, y)]);
 
     test('a black frame is empty', () {
-      expect(classifyPhoto(photo, luma((_, __) => 3), size)?.category, WasteCategory.empty);
+      expect(classifyPhoto(photo, luma((_, _) => 3), size)?.category, WasteCategory.empty);
     });
 
     test('a soft, featureless photo is blurry', () {

@@ -1,27 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../data/garbage_bin/file_bin.dart';
-
-void main() {
-  runApp(const GarbageStorageApp());
-}
-
-class GarbageStorageApp extends StatelessWidget {
-  const GarbageStorageApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Garbage Bin Storage',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.green),
-        useMaterial3: true,
-      ),
-      home: const GarbageStoragePage(),
-    );
-  }
-}
+import '../garbage_bin/format.dart';
 
 /// The Garbage Bin's file storage, as this page sees it (DAT-17). Files that
 /// Scan storage and Scan a folder move to the bin are kept here, gzipped when
@@ -60,17 +40,6 @@ class _GarbageStoragePageState extends State<GarbageStoragePage> {
 
   int get _spaceSaved => _files.fold(0, (total, file) => total + file.bytesSaved);
 
-  String _formatSize(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) {
-      return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    }
-    if (bytes < 1024 * 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
-    }
-    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GB';
-  }
-
   void _say(String message) =>
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
 
@@ -92,13 +61,18 @@ class _GarbageStoragePageState extends State<GarbageStoragePage> {
         if (!mounted) return;
         _say(updated == null
             ? '${file.fileName} cannot be reduced further with lossless compression.'
-            : 'Optimized ${file.fileName}: saved ${_formatSize(updated.bytesSaved)}.');
+            : 'Optimized ${file.fileName}: saved ${formatBytes(updated.bytesSaved)}.');
       });
+
+  /// Files Optimize All tries. Photos, videos, music and archives are
+  /// already compressed, so gzipping them would only take time; Optimize on
+  /// one of them still tries it.
+  Iterable<FileBinRecord> get _worthOptimizing => _files.where((f) => !f.compressed && worthCompressing(f.fileName));
 
   Future<void> _optimizeAll() => _run(() async {
         var saved = 0;
         var count = 0;
-        for (final file in _files.where((f) => !f.compressed).toList()) {
+        for (final file in _worthOptimizing.toList()) {
           final updated = await widget.source!.compress(file.id);
           if (updated != null) {
             saved += updated.bytesSaved;
@@ -108,7 +82,7 @@ class _GarbageStoragePageState extends State<GarbageStoragePage> {
         if (!mounted) return;
         _say(count == 0
             ? 'Nothing more can be compressed.'
-            : 'Compressed $count file(s), saving ${_formatSize(saved)}.');
+            : 'Compressed $count file(s), saving ${formatBytes(saved)}.');
       });
 
   void _toggleFileSelection(FileBinRecord file, bool selected) {
@@ -140,7 +114,7 @@ class _GarbageStoragePageState extends State<GarbageStoragePage> {
       builder: (context) => AlertDialog(
         title: Text(title),
         content: Text(
-          '${ids.length} file(s) (${_formatSize(bytes)}) will be deleted for good. '
+          '${ids.length} file(s) (${formatBytes(bytes)}) will be deleted for good. '
           "They can't be recovered afterwards.",
         ),
         actions: [
@@ -198,7 +172,7 @@ class _GarbageStoragePageState extends State<GarbageStoragePage> {
   @override
   Widget build(BuildContext context) {
     final source = widget.source;
-    return source == null ? _page() : ListenableBuilder(listenable: source, builder: (_, __) => _page());
+    return source == null ? _page() : ListenableBuilder(listenable: source, builder: (_, _) => _page());
   }
 
   Widget _page() {
@@ -245,13 +219,13 @@ class _GarbageStoragePageState extends State<GarbageStoragePage> {
                     children: [
                       _statCard(
                         'Storage Used',
-                        _formatSize(_usedStorage),
+                        formatBytes(_usedStorage),
                         Icons.storage,
                         Colors.blue,
                       ),
                       _statCard(
                         'Space Saved',
-                        _formatSize(_spaceSaved),
+                        formatBytes(_spaceSaved),
                         Icons.compress,
                         Colors.green,
                       ),
@@ -289,8 +263,8 @@ class _GarbageStoragePageState extends State<GarbageStoragePage> {
                       ),
                       const SizedBox(height: 10),
                       Text(
-                        '${_formatSize(_usedStorage)} stored for '
-                        '${_formatSize(original)} of files',
+                        '${formatBytes(_usedStorage)} stored for '
+                        '${formatBytes(original)} of files',
                       ),
                       Text(
                         '${files.where((f) => f.compressed).length} of ${files.length} file(s) compressed',
@@ -308,7 +282,7 @@ class _GarbageStoragePageState extends State<GarbageStoragePage> {
                 runSpacing: 12,
                 children: [
                   FilledButton.icon(
-                    onPressed: canAct && files.any((f) => !f.compressed) ? _optimizeAll : null,
+                    onPressed: canAct && _worthOptimizing.isNotEmpty ? _optimizeAll : null,
                     icon: _busy
                         ? const SizedBox(
                             width: 18,
@@ -410,8 +384,8 @@ class _GarbageStoragePageState extends State<GarbageStoragePage> {
                         overflow: TextOverflow.ellipsis,
                       ),
                       subtitle: Text(
-                        'Original: ${_formatSize(file.sizeBytes)}\n'
-                        'Stored: ${_formatSize(file.storedSizeBytes)}'
+                        'Original: ${formatBytes(file.sizeBytes)}\n'
+                        'Stored: ${formatBytes(file.storedSizeBytes)}'
                         '${file.compressed ? " • Compressed" : " • Original retained"}',
                       ),
                       isThreeLine: true,
@@ -436,7 +410,7 @@ class _GarbageStoragePageState extends State<GarbageStoragePage> {
 
               const SizedBox(height: 16),
               Text(
-                'Original total: ${_formatSize(_originalStorage)}',
+                'Original total: ${formatBytes(_originalStorage)}',
                 style: const TextStyle(color: Colors.grey),
               ),
               const Text(

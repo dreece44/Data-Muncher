@@ -13,7 +13,8 @@ abstract interface class AdProvider {
 /// Defaults are Google's published test ids, which always show a "Test Ad"
 /// and pay nothing. Real ids from the team's AdMob account go in with
 /// `--dart-define=ADMOB_BANNER_IOS=...` and `ADMOB_BANNER_ANDROID=...`
-/// (and the app ids in `tool/setup_platforms.dart`) before release.
+/// (and the app ids in AndroidManifest.xml and ios/Runner/Info.plist)
+/// before release.
 class AdUnitIds {
   static const String _testBannerIos = 'ca-app-pub-3940256099942544/2934735716';
   static const String _testBannerAndroid =

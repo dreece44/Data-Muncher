@@ -4,10 +4,9 @@ Sprint 4: **DAT-38 Free with ads** and **DAT-39 Ad-free subscription**, in the f
 
 ## Before the demo (once, ~10 minutes)
 
-In Terminal, in this folder:
+In Terminal, in this folder (`datamuncher/`):
 
 ```
-dart run tool/setup_platforms.dart
 flutter pub get
 flutter test
 ```
@@ -70,5 +69,5 @@ Debug builds use **test mode** for the subscription: it's simulated and nothing 
 
 - **No banner:** the Mac is offline, or Google had no test ad. The app still works; say "ads load in the background and never block anything".
 - **Plans says the subscription isn't available:** the app was run with `--dart-define=BILLING=store`. Run plain `flutter run`.
-- **Build error about CocoaPods or the iOS version:** run `dart run tool/setup_platforms.dart` again, then `flutter run`.
+- **Build error about CocoaPods:** run `flutter clean` and `flutter pub get`, then `flutter run`.
 - **Scan finds nothing:** check the photos were dragged in and photo access was allowed (Settings → Privacy & Security → Photos → DataMuncher → Full Access).

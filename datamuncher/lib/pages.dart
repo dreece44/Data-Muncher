@@ -1,14 +1,19 @@
 import 'dart:async' show unawaited;
-import 'dart:io' show File;
+import 'dart:io' show File, gzip;
+import 'dart:typed_data' show Uint8List;
 
 import 'package:flutter/material.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:photo_manager_image_provider/photo_manager_image_provider.dart';
 
+import 'application/exclusion/exclusion_list.dart';
 import 'application/garbage_bin/empty_bin.dart';
 import 'core.dart';
 import 'data/garbage_bin/bin_entry.dart';
+import 'data/garbage_bin/file_bin.dart' show fileCategoryFor;
 import 'data/garbage_bin/munch_bin_store.dart';
+import 'presentation/exclusion/do_not_collect_dialog.dart';
+import 'presentation/exclusion/do_not_collect_screen.dart';
 import 'presentation/garbage_bin/garbage_bin_screen.dart';
 
 const green = Color(0xFF2E7D1E);
@@ -19,7 +24,10 @@ class Thumb extends StatelessWidget {
   final AssetEntity asset;
   final bool selected;
   final VoidCallback onTap;
-  const Thumb(this.asset, this.selected, this.onTap, {super.key});
+
+  /// Marked "Do not collect" (DAT-32).
+  final bool excluded;
+  const Thumb(this.asset, this.selected, this.onTap, {this.excluded = false, super.key});
 
   @override
   Widget build(BuildContext context) => GestureDetector(
@@ -30,6 +38,12 @@ class Thumb extends StatelessWidget {
             fit: BoxFit.cover,
           ),
           if (asset.type == AssetType.video) const Positioned(left: 4, bottom: 4, child: Icon(Icons.videocam, size: 18)),
+          if (excluded)
+            const Positioned(
+              right: 4,
+              top: 4,
+              child: Tooltip(message: 'Marked Do not collect', child: Icon(Icons.shield, size: 20)),
+            ),
           if (selected) Container(color: green.withValues(alpha: 0.55), child: const Icon(Icons.check_circle, size: 32)),
         ]),
       );
@@ -48,7 +62,34 @@ class ReviewPage extends StatefulWidget {
 }
 
 class _ReviewPageState extends State<ReviewPage> {
-  late final Set<String> sel = widget.preselect ? widget.assets.map((a) => a.id).toSet() : {};
+  ExclusionList get _exclusions => widget.state.exclusions;
+
+  late final Set<String> sel = widget.preselect
+      ? {for (final a in widget.assets) if (!_exclusions.isExcluded(a.id)) a.id}
+      : {};
+
+  Future<void> _munch() async {
+    final chosen = widget.assets.where((a) => sel.contains(a.id)).toList();
+    final excluded = chosen.where((a) => _exclusions.isExcluded(a.id)).length;
+    if (excluded > 0) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: const Text('Collect anyway?'),
+          content: Text(excluded == 1
+              ? 'You marked 1 of these "Do not collect". Collecting it removes that mark.'
+              : 'You marked $excluded of these "Do not collect". Collecting them removes that mark.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+            TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Collect anyway')),
+          ],
+        ),
+      );
+      if (ok != true) return;
+    }
+    await widget.state.collect(chosen);
+    if (mounted) Navigator.pop(context);
+  }
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -62,7 +103,12 @@ class _ReviewPageState extends State<ReviewPage> {
                 itemCount: widget.assets.length,
                 itemBuilder: (_, i) {
                   final a = widget.assets[i];
-                  return Thumb(a, sel.contains(a.id), () => setState(() => sel.contains(a.id) ? sel.remove(a.id) : sel.add(a.id)));
+                  return Thumb(
+                    a,
+                    sel.contains(a.id),
+                    () => setState(() => sel.contains(a.id) ? sel.remove(a.id) : sel.add(a.id)),
+                    excluded: _exclusions.isExcluded(a.id),
+                  );
                 },
               ),
         bottomNavigationBar: SafeArea(
@@ -70,12 +116,7 @@ class _ReviewPageState extends State<ReviewPage> {
             padding: const EdgeInsets.all(12),
             child: FilledButton(
               style: FilledButton.styleFrom(backgroundColor: darkGreen, padding: const EdgeInsets.all(16)),
-              onPressed: sel.isEmpty
-                  ? null
-                  : () async {
-                      await widget.state.collect(widget.assets.where((a) => sel.contains(a.id)));
-                      if (context.mounted) Navigator.pop(context);
-                    },
+              onPressed: sel.isEmpty ? null : _munch,
               child: Text('MUNCH ${sel.length} ITEMS', style: mono),
             ),
           ),
@@ -114,20 +155,20 @@ class _BinPageState extends State<BinPage> {
     super.dispose();
   }
 
+  /// File Recovery with Collection Exclusion (DAT-32).
   Future<void> _recover(BinEntry entry) async {
-    final doNotCollect = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (c) => AlertDialog(
-        title: const Text('Do not collect?'),
-        content: Text('Stop DataMuncher from collecting ${entry.fileName} again for $excludeDays days?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('No')),
-          TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Yes')),
-        ],
-      ),
+    final doNotCollect = await showDoNotCollectDialog(
+      context,
+      title: 'Do not collect?',
+      message: 'Stop DataMuncher from collecting ${entry.fileName} again for $exclusionPeriodLabel?',
+      confirmLabel: 'Do not collect',
+      declineLabel: 'Just recover',
     );
-    await widget.state.recover([entry.id], doNotCollect: doNotCollect ?? false);
+    await widget.state.recover(
+      [entry.id],
+      doNotCollect: doNotCollect,
+      names: {entry.id: entry.fileName},
+    );
   }
 
   /// Deletes through the phone's trash. If the phone has none, asks before
@@ -199,12 +240,14 @@ class _BinPageState extends State<BinPage> {
     final stored = _store.storedPathFor(entry.id);
     if (stored != null) {
       if (entry.category != FileCategory.photo) return null;
+      // A photo the Garbage Storage page compressed is gzipped on disk.
+      if (widget.state.fileBin[entry.id]?.compressed ?? false) return _GzipPhoto(stored);
       return Image.file(
         File(stored),
         fit: BoxFit.cover,
         cacheWidth: 200,
         // Damaged photos (the scan's "unreadable" finds) fall back to an icon.
-        errorBuilder: (_, __, ___) => const Icon(Icons.broken_image_outlined),
+        errorBuilder: (_, _, _) => const Icon(Icons.broken_image_outlined),
       );
     }
     final asset = _store.assetFor(entry.id);
@@ -219,7 +262,7 @@ class _BinPageState extends State<BinPage> {
   @override
   Widget build(BuildContext context) => ListenableBuilder(
         listenable: widget.state,
-        builder: (_, __) => GarbageBinScreen(
+        builder: (_, _) => GarbageBinScreen(
           store: _store,
           onRecover: _recover,
           onDelete: _delete,
@@ -227,5 +270,95 @@ class _BinPageState extends State<BinPage> {
           emptyBinNote: _emptyBinNote,
           thumbnailBuilder: _thumbnail,
         ),
+      );
+}
+
+/// Thumbnail of a photo the bin keeps gzip-compressed (DAT-17): unpacked in
+/// memory, so the file in the bin stays as it is.
+class _GzipPhoto extends StatefulWidget {
+  final String path;
+  const _GzipPhoto(this.path);
+
+  @override
+  State<_GzipPhoto> createState() => _GzipPhotoState();
+}
+
+class _GzipPhotoState extends State<_GzipPhoto> {
+  late final Future<Uint8List> _bytes =
+      File(widget.path).readAsBytes().then((packed) => Uint8List.fromList(gzip.decode(packed)));
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<Uint8List>(
+        future: _bytes,
+        builder: (_, snap) {
+          if (snap.hasError) return const Icon(Icons.broken_image_outlined);
+          final bytes = snap.data;
+          if (bytes == null) return const SizedBox.shrink();
+          return Image.memory(
+            bytes,
+            fit: BoxFit.cover,
+            cacheWidth: 200,
+            errorBuilder: (_, _, _) => const Icon(Icons.broken_image_outlined),
+          );
+        },
+      );
+}
+
+/// Do-not-collect list (DAT-32) with photo thumbnails and app icons.
+class DoNotCollectPage extends StatelessWidget {
+  final MunchState state;
+
+  /// App icon for a package name, from the unused-apps feature (DAT-25).
+  final Widget? Function(String packageName)? appIcon;
+  const DoNotCollectPage(this.state, {this.appIcon, super.key});
+
+  @override
+  Widget build(BuildContext context) => DoNotCollectScreen(
+        exclusions: state.exclusions,
+        thumbnailBuilder: (entry) => switch (entry.kind) {
+          ExcludedKind.app => appIcon?.call(entry.id),
+          // Storage files are marked by path, photo library items by id.
+          ExcludedKind.file when entry.id.startsWith('/') => _FileThumb(entry.id),
+          ExcludedKind.file => _AssetThumb(entry.id),
+        },
+      );
+}
+
+const _noThumb = ColoredBox(color: Color(0xFF222222), child: Icon(Icons.insert_drive_file_outlined));
+
+/// Thumbnail for a recovered storage file: the photo itself, or an icon.
+class _FileThumb extends StatelessWidget {
+  final String path;
+  const _FileThumb(this.path);
+
+  @override
+  Widget build(BuildContext context) => fileCategoryFor(path) == FileCategory.photo
+      ? Image.file(File(path), fit: BoxFit.cover, cacheWidth: 120, errorBuilder: (_, _, _) => _noThumb)
+      : _noThumb;
+}
+
+/// Thumbnail for a photo library id, or a plain icon if it's gone.
+class _AssetThumb extends StatefulWidget {
+  final String id;
+  const _AssetThumb(this.id);
+
+  @override
+  State<_AssetThumb> createState() => _AssetThumbState();
+}
+
+class _AssetThumbState extends State<_AssetThumb> {
+  late final Future<AssetEntity?> _asset = AssetEntity.fromId(widget.id);
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<AssetEntity?>(
+        future: _asset,
+        builder: (_, snap) {
+          final asset = snap.data;
+          if (asset == null) return const ColoredBox(color: Color(0xFF222222), child: Icon(Icons.photo_outlined));
+          return Image(
+            image: AssetEntityImageProvider(asset, isOriginal: false, thumbnailSize: const ThumbnailSize.square(120)),
+            fit: BoxFit.cover,
+          );
+        },
       );
 }
