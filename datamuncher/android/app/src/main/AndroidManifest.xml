@@ -9,8 +9,11 @@
          older versions grant it automatically. The hourly background check
          uses WorkManager, which declares its own boot permission. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Unused apps (DAT-25): show Android's uninstall dialog. Usage access
+         and the list of launchable apps come from scan_engine_flutter. -->
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
     <application
-        android:label="datamuncher"
+        android:label="DataMuncher"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:requestLegacyExternalStorage="true">
@@ -41,6 +44,11 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- DAT-38: Google's published AdMob *test* app id. Replace it with the
+             team's real id from the AdMob console before releasing. -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-3940256099942544~3347511713" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

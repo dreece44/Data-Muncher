@@ -39,8 +39,7 @@ AppInventory platformAppInventory() =>
         ? MethodChannelAppInventory()
         : const UnsupportedAppInventory();
 
-/// Talks to the Android code in `MainActivity.kt` (installed by
-/// `dart run tool/setup_platforms.dart`).
+/// Talks to the Android code in `MainActivity.kt`.
 class MethodChannelAppInventory implements AppInventory {
   MethodChannelAppInventory(
       [this.channel = const MethodChannel('datamuncher/apps')]);

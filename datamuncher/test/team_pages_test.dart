@@ -85,6 +85,72 @@ void main() {
     expect(groups.values.elementAt(1).map((c) => c.path), ['/DCIM/1.jpg', '/DCIM/2.jpg']);
   });
 
+  test('reviewSuggestionsFrom makes one swipe card per reason, largest first', () {
+    final cards = reviewSuggestionsFrom(candidates);
+    expect([for (final c in cards.keys) '${c.title}: ${c.storageSize}, ${c.itemCount}'], [
+      'Duplicates: 3.5 MB, 2',
+      'Unreadable files: 500 KB, 1',
+      'Empty files: 0 B, 1',
+    ]);
+    expect(cards.keys.first.category, 'Photos');
+    expect(cards.values.first.map((c) => c.path), ['/DCIM/1.jpg', '/DCIM/2.jpg']);
+  });
+
+  group('SwipeReviewPage (PB-20)', () {
+    /// Taps [label], then waits for its message to go so it doesn't cover
+    /// the buttons.
+    Future<void> waitForMessage(WidgetTester tester) async {
+      await tester.pumpAndSettle(); // slides in
+      await tester.pump(const Duration(seconds: 3)); // shown for 2 s
+      await tester.pumpAndSettle(); // slides out
+    }
+
+    Future<void> press(WidgetTester tester, String label) async {
+      await tester.tap(find.text(label));
+      await waitForMessage(tester);
+    }
+
+    testWidgets('with the scan, Move to bin sends that card to the bin', (tester) async {
+      final cards = reviewSuggestionsFrom(candidates);
+      final removed = <String>[];
+      await tester.pumpWidget(app(SwipeReviewPage(
+        suggestions: cards.keys.toList(),
+        onRemove: (card) async {
+          removed.add(card.id);
+          return null;
+        },
+      )));
+      expect(find.text('Duplicates'), findsOneWidget);
+      await tester.tap(find.text('Move to bin'));
+      await tester.pumpAndSettle();
+      expect(removed, ['duplicate']);
+      expect(find.text('Moved Duplicates (3.5 MB) to the Garbage Bin.'), findsOneWidget);
+      await waitForMessage(tester);
+
+      await press(tester, 'Keep');
+      await press(tester, 'Skip');
+      expect(find.text('Review Complete!'), findsOneWidget);
+      expect(find.text('Moved to the Garbage Bin: 1'), findsOneWidget);
+      expect(removed, ['duplicate'], reason: 'Keep and Skip move nothing');
+
+      await press(tester, 'Review Again');
+      await press(tester, 'Move to bin');
+      expect(removed, ['duplicate'], reason: 'already in the bin');
+    });
+
+    testWidgets('on its own, it shows the sample cards and moves nothing', (tester) async {
+      await tester.pumpWidget(app(const SwipeReviewPage()));
+      expect(find.text('Old Screenshots'), findsOneWidget);
+      expect(find.text('Remove'), findsOneWidget);
+      expect(find.text('Move to bin'), findsNothing);
+    });
+
+    testWidgets('says so when there is nothing to review', (tester) async {
+      await tester.pumpWidget(app(SwipeReviewPage(suggestions: const [], onRemove: (_) async => null)));
+      expect(find.textContaining('Nothing to review'), findsOneWidget);
+    });
+  });
+
   group('GarbageCollectionPage', () {
     testWidgets('sample data totals the ticked rows', (tester) async {
       await tester.pumpWidget(app(const GarbageCollectionPage()));
@@ -168,10 +234,10 @@ void main() {
     var details = 0, exports = 0;
     await tester.pumpWidget(app(StorageResultsPage(
       scanResults: scanResultsFrom(report(), candidates, const []),
-      onViewDetails: () => details++,
+      onReview: () => details++,
       onExport: () => exports++,
     )));
-    await tester.tap(find.text('View Details'));
+    await tester.tap(find.text('Review Suggestions'));
     await tester.tap(find.text('Export Results'));
     expect((details, exports), (1, 1));
 
@@ -226,8 +292,8 @@ void main() {
 
     testWidgets('shows what the bin really stores', (tester) async {
       await pump(tester);
-      expect(find.text('2.5 KB'), findsWidgets, reason: 'storage used: 2048 + 512 bytes');
-      expect(find.text('8.0 KB'), findsOneWidget, reason: 'space saved by compression');
+      expect(find.text('2.6 KB'), findsWidgets, reason: 'storage used: 2048 + 512 bytes, as the Garbage Bin shows it');
+      expect(find.text('8.2 KB'), findsOneWidget, reason: 'space saved by compression');
       expect(find.text('2'), findsOneWidget);
       expect(find.text('1 of 2 file(s) compressed'), findsOneWidget);
       expect(find.text('Collect Files'), findsNothing, reason: "the picker can't remove originals");
@@ -263,7 +329,7 @@ void main() {
 
   testWidgets('MunchHome opens before any scan', (tester) async {
     await tester.pumpWidget(app(const MunchHome()));
-    expect(find.text('MUNCH MY DATA'), findsOneWidget);
+    expect(find.text('PICK A FOLDER'), findsOneWidget);
     for (final label in ['DUPLICATES', 'EMPTY', 'UNREADABLE', 'BLURRY']) {
       expect(find.text(label), findsOneWidget);
     }

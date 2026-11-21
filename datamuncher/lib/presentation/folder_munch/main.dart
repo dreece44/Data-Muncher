@@ -215,7 +215,7 @@ class _MunchHomeState extends State<MunchHome> {
                     _loading
                         ? _status
                         : result == null
-                            ? 'MUNCH MY DATA'
+                            ? 'PICK A FOLDER'
                             : 'SCAN AGAIN (${result.summary.totalFlagged} FLAGGED)',
                     style: const TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1),
                   ),

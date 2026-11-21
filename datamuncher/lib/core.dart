@@ -10,15 +10,14 @@ import 'package:scan_engine_flutter/scan_engine_flutter.dart' show NativeBridge;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'application/duplicate_groups/best_copy.dart';
+import 'application/exclusion/exclusion_list.dart';
 import 'application/storage_alert/storage_alert.dart';
 import 'application/storage_scan/storage_scan.dart';
+import 'data/exclusion/shared_prefs_exclusion_store.dart';
 import 'data/garbage_bin/bin_entry.dart';
 import 'data/garbage_bin/file_bin.dart';
 import 'data/storage_alert/storage_alert_service.dart';
 import 'rules.dart';
-
-/// Days a recovered file is protected by "Do not collect".
-const int excludeDays = 30;
 
 /// How long the phone's own trash keeps deleted photos and videos (iOS
 /// Recently Deleted, the Android 11+ trash). Emptying the bin relies on it
@@ -115,6 +114,15 @@ class MediaIndex {
 }
 
 class MunchState extends ChangeNotifier {
+  MunchState({ExclusionList? exclusions}) : exclusions = exclusions ?? ExclusionList() {
+    this.exclusions.addListener(notifyListeners);
+  }
+
+  /// Do-not-collect list (DAT-32): recovered files and kept apps that scans
+  /// skip until their period ends. Photo library items are listed by asset
+  /// id, storage files by path.
+  final ExclusionList exclusions;
+
   List<AssetEntity> all = [];
   List<AssetEntity> duplicates = [], empty = [], blurry = [];
 
@@ -123,7 +131,6 @@ class MunchState extends ChangeNotifier {
   List<DuplicateGroup> duplicateGroups = [];
   Set<String> bin = {}; // Garbage Bin (asset ids)
   Map<String, BinRecord> binInfo = {}; // id -> why/when it was collected
-  Map<String, int> excluded = {}; // id, or file path for storage files -> expiry (ms)
 
   /// Storage files moved to the bin by the storage scan.
   late FileBin fileBin = FileBin(binFolderFor: (path) => binFolderUnder(_storageRoots, path));
@@ -155,11 +162,11 @@ class MunchState extends ChangeNotifier {
   List<String> get binIds => [...bin, ...fileBin.records.map((r) => r.id)];
 
   /// Whether a storage file at [path] was recovered with "Do not collect".
-  bool isExcludedPath(String path) => (excluded[path] ?? 0) > DateTime.now().millisecondsSinceEpoch;
+  bool isExcludedPath(String path) => exclusions.isExcluded(path);
 
   /// Whether a photo library item was recovered with "Do not collect" and
   /// the 30 days haven't run out yet.
-  bool isExcludedAsset(String id) => (excluded[id] ?? 0) > DateTime.now().millisecondsSinceEpoch;
+  bool isExcludedAsset(String id) => exclusions.isExcluded(id);
 
   Future<void> init() async {
     _p = await SharedPreferences.getInstance();
@@ -173,12 +180,8 @@ class MunchState extends ChangeNotifier {
     for (final id in bin) {
       binInfo.putIfAbsent(id, () => BinRecord(CollectionReason.other, now));
     }
-    final nowMs = now.millisecondsSinceEpoch;
-    for (final e in _p.getStringList('excl') ?? []) {
-      final i = e.lastIndexOf('|');
-      final t = int.tryParse(e.substring(i + 1)) ?? 0;
-      if (t > nowMs) excluded[e.substring(0, i)] = t;
-    }
+    // Also moves the old 'excl' entries into the list's format.
+    await exclusions.load(SharedPrefsExclusionStore(_p));
     fileBin = FileBin(
       binFolderFor: fileBin.binFolderFor,
       records: FileBin.decode(_p.getStringList('fileBin') ?? const []),
@@ -195,7 +198,6 @@ class MunchState extends ChangeNotifier {
       for (final id in bin)
         if (binInfo[id] != null) binInfo[id]!.encode(id),
     ]);
-    await _p.setStringList('excl', [for (final e in excluded.entries) '${e.key}|${e.value}']);
     await _p.setStringList('fileBin', fileBin.encode());
     try {
       await fileBin.saveIndexes();
@@ -305,6 +307,8 @@ class MunchState extends ChangeNotifier {
   Future<void> _scanLibrary() async {
     final paths = await PhotoManager.getAssetPathList(onlyAll: true);
     if (paths.isEmpty) return;
+    // Marks that ended since the last scan make those files eligible again.
+    await exclusions.purgeExpired();
     final count = await paths.first.assetCountAsync;
     all = await paths.first.getAssetListRange(start: 0, end: count);
 
@@ -382,8 +386,12 @@ class MunchState extends ChangeNotifier {
 
   /// Garbage Collection: send items to the Garbage Bin. [reason] overrides
   /// the scan's reason for each item.
+  ///
+  /// Collecting a file by hand overrides its "Do not collect" mark (the
+  /// review page asks first), so the mark is removed.
   Future<void> collect(Iterable<AssetEntity> items, {CollectionReason? reason}) async {
     final ids = items.map((a) => a.id).toSet();
+    await exclusions.removeAll(ids);
     final now = DateTime.now();
     for (final id in ids) {
       if (bin.add(id)) {
@@ -397,13 +405,13 @@ class MunchState extends ChangeNotifier {
     // list follows, so "Munch my data" never takes the last copy.
     duplicateGroups = [
       for (final g in duplicateGroups)
-        if (g.without(ids) case final left?) left
+        ?g.without(ids)
     ];
     final byId = {for (final a in all) a.id: a};
     duplicates = [
       for (final g in duplicateGroups)
         for (final copy in g.others)
-          if (byId[copy.id] case final a?) a
+          ?byId[copy.id]
     ];
     binRevision++;
     await _save();
@@ -439,26 +447,30 @@ class MunchState extends ChangeNotifier {
     return FileCollection(moved: movedFrom.length, bytes: bytes, failed: failed);
   }
 
-  /// File Recovery (+ optional Collection Exclusion).
-  Future<void> recover(Iterable<String> ids, {bool doNotCollect = false}) async {
+  /// File Recovery, optionally marking the files "Do not collect" for 30
+  /// days (DAT-32). [names] gives each file's name for the Do-not-collect
+  /// list.
+  Future<void> recover(
+    Iterable<String> ids, {
+    bool doNotCollect = false,
+    Map<String, String> names = const {},
+  }) async {
     final list = ids.toList();
-    final until = DateTime.now().add(const Duration(days: excludeDays)).millisecondsSinceEpoch;
+    final marks = <String, String?>{};
     final restored = <String>[];
     for (final id in list.where(fileBin.contains).toList()) {
-      final original = fileBin[id]!.originalPath;
-      restored.add(await fileBin.restore(id));
-      // Storage files get a new id each time they're binned, so exclude the path.
-      if (doNotCollect) excluded[original] = until;
+      final record = fileBin[id]!;
+      final path = await fileBin.restore(id);
+      restored.add(path);
+      // Storage files get a new id each time they're binned, so mark the
+      // path. A recovered file that had to take a new name is marked there.
+      marks[path] = names[id] ?? record.fileName;
     }
-    bin.removeAll(list);
     for (final id in list) {
+      if (bin.remove(id)) marks[id] = names[id];
       binInfo.remove(id);
     }
-    if (doNotCollect) {
-      for (final id in list) {
-        if (!id.startsWith(fileBinIdPrefix)) excluded[id] = until;
-      }
-    }
+    if (doNotCollect) await exclusions.excludeAll(marks, kind: ExcludedKind.file);
     await MediaIndex.refresh(restored);
     binRevision++;
     await _save();

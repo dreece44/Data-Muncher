@@ -22,8 +22,8 @@ enum UnusedAppsStatus {
 
 /// Shown when the Android side of the feature isn't installed.
 const String appInventoryNotSetUpMessage =
-    "This build doesn't include DataMuncher's Android app-scanning code. "
-    'Run `dart run tool/setup_platforms.dart`, then rebuild.';
+    "This build doesn't include DataMuncher's Android app-scanning code "
+    '(android/app/src/main/kotlin/.../MainActivity.kt). Restore it, then rebuild.';
 
 /// What the Unused Apps screen and the home button show (DAT-25).
 class UnusedAppsController extends ChangeNotifier {

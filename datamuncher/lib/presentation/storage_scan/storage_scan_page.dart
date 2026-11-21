@@ -19,9 +19,13 @@ enum _Stage { scanning, needsPermission, failed, done }
 /// storage, lists what it found with everything ticked, and moves the ticked
 /// files to the Garbage Bin.
 class StorageScanPage extends StatefulWidget {
-  const StorageScanPage(this.state, {super.key});
+  const StorageScanPage(this.state, {super.key, this.onOpenUnusedApps});
 
   final MunchState state;
+
+  /// Opens the Unused Apps screen (DAT-25), where apps can be uninstalled or
+  /// kept. Null hides the button.
+  final VoidCallback? onOpenUnusedApps;
 
   @override
   State<StorageScanPage> createState() => _StorageScanPageState();
@@ -144,26 +148,43 @@ class _StorageScanPageState extends State<StorageScanPage> {
     Navigator.pop(context);
   }
 
-  /// The garbage collection page, one row per category. What it sends to
-  /// the bin also leaves this list.
+  /// Moves [picked] to the Garbage Bin for the teammates' pages; what moved
+  /// also leaves this list. Returns a message when some files couldn't be
+  /// moved, null when all of them were.
+  Future<String?> _moveGroup(List<ScanCandidate> picked) async {
+    final result = await widget.state.collectFiles(picked);
+    final failed = result.failed.toSet();
+    final moved = {for (final c in picked) if (!failed.contains(c.path)) c.item.id};
+    if (mounted) {
+      setState(() {
+        _candidates = [for (final c in _candidates) if (!moved.contains(c.item.id)) c];
+        _selected.removeAll(moved);
+      });
+    }
+    // Failed files stay in this page's list to try again.
+    return failed.isEmpty
+        ? null
+        : "Moved ${result.moved} to the garbage bin. ${failed.length} couldn't be moved; "
+            'they are still listed on the scan page.';
+  }
+
+  /// The garbage collection page, one row per category.
   Future<void> _openGarbageCollection() {
     final groups = collectionGroupsFrom(_candidates);
-    return openGarbageCollection(context, groups.keys.toList(), (chosen) async {
-      final picked = [for (final row in chosen) ...groups[row]!];
-      final result = await widget.state.collectFiles(picked);
-      final failed = result.failed.toSet();
-      final moved = {for (final c in picked) if (!failed.contains(c.path)) c.item.id};
-      if (mounted) {
-        setState(() {
-          _candidates = [for (final c in _candidates) if (!moved.contains(c.item.id)) c];
-          _selected.removeAll(moved);
-        });
-      }
-      // Failed files stay in this page's list to try again.
-      return failed.isEmpty
-          ? null
-          : "Moved ${result.moved} to the garbage bin. ${failed.length} couldn't be moved; "
-              'they are still listed on the scan page.';
+    return openGarbageCollection(
+      context,
+      groups.keys.toList(),
+      (chosen) => _moveGroup([for (final row in chosen) ...groups[row]!]),
+    );
+  }
+
+  /// The swipe review from the summary page, one card per category. Only
+  /// files still on this page's list are moved.
+  void _openSwipeReview() {
+    final groups = reviewSuggestionsFrom(_candidates);
+    openSwipeReview(context, groups.keys.toList(), (card) {
+      final left = {for (final c in _candidates) c.item.id};
+      return _moveGroup([for (final c in groups[card]!) if (left.contains(c.item.id)) c]);
     });
   }
 
@@ -302,7 +323,12 @@ class _StorageScanPageState extends State<StorageScanPage> {
           Wrap(spacing: 8, runSpacing: 8, children: [
             OutlinedButton.icon(
               onPressed: () =>
-                  openStorageResults(context, scanResultsFrom(report, _candidates, _apps), onExport: _export),
+                  openStorageResults(
+                context,
+                scanResultsFrom(report, _candidates, _apps),
+                onReview: _openSwipeReview,
+                onExport: _export,
+              ),
               icon: const Icon(Icons.pie_chart_outline),
               label: const Text('Summary'),
             ),
@@ -335,7 +361,16 @@ class _StorageScanPageState extends State<StorageScanPage> {
           ListTile(
             leading: const Icon(Icons.apps),
             title: Text(app.label),
-            subtitle: Text('${formatBytes(app.sizeBytes)} · uninstall it from Settings to free this space'),
+            subtitle: Text(formatBytes(app.sizeBytes)),
+          ),
+        if (widget.onOpenUnusedApps case final open?)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: OutlinedButton.icon(
+              onPressed: open,
+              icon: const Icon(Icons.delete_sweep_outlined),
+              label: const Text('Uninstall or keep apps'),
+            ),
           ),
       ],
     ]);

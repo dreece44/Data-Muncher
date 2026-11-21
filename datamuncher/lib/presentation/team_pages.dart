@@ -14,32 +14,41 @@ import 'folder_munch/main.dart' show MoveOutcome, MunchHome;
 import 'garbage_bin/format.dart';
 import 'garbage_collection/garbage_collection.dart' show GarbageCollectionPage, StorageItem;
 import 'garbage_storage/garbage_collection_storage.dart' show GarbageStoragePage, GarbageStorageSource;
-import 'storage_results/storage_results.dart' show ScanResults, StorageResultsPage;
+import 'storage_results/storage_results.dart' show ReviewSuggestion, ScanResults, StorageResultsPage, SwipeReviewPage;
 
 // Teammates' pages, opened from the DataMuncher app. Each was built as its
 // own app with a light theme, so it keeps that theme here rather than the
 // app's dark one (their light cards would otherwise get white text).
 
-Future<void> _push(BuildContext context, Color seed, Widget page) => Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => Theme(
-          data: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: seed), useMaterial3: true),
-          child: page,
-        ),
-      ),
+Future<void> _push(BuildContext context, Color seed, Widget page) =>
+    Navigator.push(context, MaterialPageRoute(builder: (_) => _themed(seed, page)));
+
+Widget _themed(Color seed, Widget page) => Theme(
+      data: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: seed), useMaterial3: true),
+      child: page,
     );
 
 /// coilehayden0's Storage Scan Results, with the wasted-space notice.
-/// View Details goes back to the scan's file list, which opened this page.
-Future<void> openStorageResults(BuildContext context, ScanResults results, {VoidCallback? onExport}) {
-  final navigator = Navigator.of(context);
-  return _push(
-    context,
-    Colors.deepPurple,
-    StorageResultsPage(scanResults: results, onViewDetails: () => navigator.pop(), onExport: onExport),
-  );
-}
+Future<void> openStorageResults(
+  BuildContext context,
+  ScanResults results, {
+  VoidCallback? onReview,
+  VoidCallback? onExport,
+}) =>
+    _push(
+      context,
+      Colors.deepPurple,
+      StorageResultsPage(scanResults: results, onReview: onReview, onExport: onExport),
+    );
+
+/// coilehayden0's swipe review (PB-20): one card per kind of waste; swiping
+/// left moves those files to the Garbage Bin.
+Future<void> openSwipeReview(
+  BuildContext context,
+  List<ReviewSuggestion> suggestions,
+  Future<String?> Function(ReviewSuggestion suggestion) onRemove,
+) =>
+    _push(context, Colors.deepPurple, SwipeReviewPage(suggestions: suggestions, onRemove: onRemove));
 
 /// coilehayden0's Garbage Collection: tick categories and send them to the bin.
 Future<void> openGarbageCollection(
@@ -50,10 +59,10 @@ Future<void> openGarbageCollection(
     _push(context, Colors.deepPurple, GarbageCollectionPage(items: items, onSend: onSend));
 
 /// coilehayden0's Garbage Bin Storage (DAT-17): the bin's compressed file
-/// storage.
-Future<void> openGarbageStorage(BuildContext context, MunchState state) {
+/// storage, in its own theme.
+Widget garbageStoragePage(MunchState state) {
   unawaited(state.adoptStrandedFiles());
-  return _push(context, Colors.green, GarbageStoragePage(source: MunchStorageSource(state)));
+  return _themed(Colors.green, GarbageStoragePage(source: MunchStorageSource(state)));
 }
 
 /// The Garbage Bin's storage files, for the Garbage Storage page.
@@ -82,10 +91,6 @@ class MunchStorageSource implements GarbageStorageSource {
   @override
   void removeListener(VoidCallback listener) => state.removeListener(listener);
 }
-
-/// nathangh-ung's folder scan (DAT-16 classifier, DAT-18 one-tap munch).
-Future<void> openFolderMunch(BuildContext context, MunchState state) =>
-    Navigator.push(context, MaterialPageRoute(builder: (_) => FolderMunchPage(state)));
 
 /// The Garbage Bin reason for a folder-scan finding.
 CollectionReason reasonForFolderFinding(dat16.WasteCategory category) => switch (category) {
